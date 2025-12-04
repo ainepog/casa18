@@ -44,7 +44,6 @@ class InversionAdmin(admin.ModelAdmin):
 # ================================================
 
 class TipoDepartamentoInline(admin.TabularInline):
-    # Mostramos los TIPOS dentro del proyecto (porque Depto no tiene enlace directo a Proyecto)
     model = TipoDepartamento
     extra = 0
 
@@ -58,14 +57,31 @@ class ProyectoAdmin(admin.ModelAdmin):
         return "✅ SÍ" if obj.banco_activado else "❌ NO"
     banco_activado_check.short_description = "Banco OK"
 
+
+class DepartamentoInline(admin.TabularInline):
+    model = Departamento
+    extra = 0
+    fields = ('nro', 'piso', 'area_m2', 'ver_precio_base', 'estado_disponibilidad')
+    readonly_fields = ('ver_precio_base',)  # Solo lectura
+
+    def ver_precio_base(self, obj):
+        return obj.tipo.precio_base
+
+    ver_precio_base.short_description = "Precio Lista (Base)"
+
+
 class DepartamentoAdmin(admin.ModelAdmin):
-    list_display = ('nro', 'obtener_proyecto', 'tipo', 'precio', 'estado_disponibilidad')
+    list_display = ('nro', 'obtener_proyecto', 'tipo', 'ver_precio', 'estado_disponibilidad')
     list_filter = ('estado_disponibilidad',)
     search_fields = ('nro',)
 
     def obtener_proyecto(self, obj):
         return obj.tipo.proyecto.nombre
-    obtener_proyecto.short_description = "Proyecto"
+
+    def ver_precio(self, obj):
+        return obj.tipo.precio_base
+
+    ver_precio.short_description = "Precio Base"
 
 # ================================================
 # 3. CLIENTES, INVERSORES Y VENTAS
@@ -79,12 +95,40 @@ class InversorAdmin(admin.ModelAdmin):
     list_display = ('nombre_completo', 'nro_doc', 'correo', 'telefono')
     search_fields = ('nombre_completo', 'nro_doc') # Necesario para el autocomplete
 
+
 class VentaAdmin(admin.ModelAdmin):
-    # 'monto' es el campo real, no 'precio_venta_final'
-    list_display = ('id', 'cliente', 'departamento', 'monto', 'fecha_venta')
-    list_filter = ('fecha_venta',)
+    list_display = ('id', 'cliente', 'departamento', 'ver_precio_lista', 'descuento_porcentaje', 'ver_monto_final',
+                    'tipo_financiamiento')
+
+    list_filter = ('fecha_venta', 'tipo_financiamiento')
+
     search_fields = ('cliente__nombre', 'departamento__nro')
     autocomplete_fields = ['cliente', 'departamento']
+
+    fields = (
+        'cliente',
+        'departamento',
+        'fecha_venta',
+        'precio_lista',
+        'descuento_porcentaje',
+        'monto',
+        # Sección Banco
+        'tipo_financiamiento',
+        'entidad_financiera',
+        'porcentaje_financiado'
+    )
+
+    readonly_fields = ('precio_lista', 'monto')
+
+    def ver_precio_lista(self, obj):
+        return f"S/ {obj.precio_lista:,.2f}"
+
+    ver_precio_lista.short_description = "Precio Lista"
+
+    def ver_monto_final(self, obj):
+        return f"S/ {obj.monto:,.2f}"
+
+    ver_monto_final.short_description = "Monto Final"
 
 # ================================================
 # 4. REGISTRO FINAL
@@ -105,7 +149,7 @@ admin.site.register(Documento)
 admin.site.register(ProveedorProyecto)
 
 # ================================================
-# 5. MAQUILLAJE
+# 5. Interface
 # ================================================
 admin.site.site_header = "ERP Inmobiliaria"
 admin.site.site_title = "Panel Admin"

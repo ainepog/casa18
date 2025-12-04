@@ -26,7 +26,11 @@ ESTADOS_PROYECTO = [('Planos', 'En Planos'),('Preventa', 'En Preventa'), ('Const
 TIPO_GASTO = [('Directo', 'Gasto Directo'), ('Indirecto', 'Gasto Indirecto')]
 FRECUENCIA_PAGO = [('Mensual', 'Mensual'), ('Bimestral', 'Bimestral'), ('Trimestral', 'Trimestral')]
 ESTADO_DISPONIBILIDAD = [('Disponible', 'Disponible'), ('Separado', 'Separado'), ('Vendido', 'Vendido')]
-
+TIPOS_FINANCIAMIENTO = [
+    ('Hipotecario', 'Crédito Hipotecario (Banco)'),
+    ('Directo', 'Crédito Directo (Inmobiliaria)'),
+    ('Contado', 'Al Contado / Transferencia'),
+]
 
 # ==========================================
 # MÓDULO CENTRAL (PROYECTOS)
@@ -274,6 +278,8 @@ class TipoDepartamento(models.Model):
     nombre = models.CharField(max_length=100)  # Ej: Flat Tipo A
     descripcion = models.TextField(blank=True)
     plano_modelo = models.URLField(blank=True, null=True)
+    precio_base = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+                                      help_text="Precio sugerido para todos los depas de este tipo")
 
     def __str__(self):
         return f"{self.nombre} - {self.proyecto}"
@@ -283,8 +289,15 @@ class Departamento(models.Model):
     tipo = models.ForeignKey(TipoDepartamento, on_delete=models.CASCADE)
     nro = models.CharField(max_length=20)  # 301
     area_m2 = models.DecimalField(max_digits=6, decimal_places=2)
-    precio = models.DecimalField(max_digits=12, decimal_places=2)
     estado_disponibilidad = models.CharField(max_length=20, choices=ESTADO_DISPONIBILIDAD, default='Disponible')
+
+    class Meta:
+        unique_together = ('tipo', 'nro')
+
+    def save(self, *args, **kwargs):
+        if not self.precio:
+            self.precio = self.tipo.precio_base
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Dpto {self.nro} ({self.estado_disponibilidad})"
@@ -308,20 +321,32 @@ class ClienteProyecto(models.Model):
 
 class Venta(models.Model):
     cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT)
-    departamento = models.OneToOneField(Departamento,
-                                        on_delete=models.PROTECT)  # OneToOne asegura que no se venda 2 veces
+    departamento = models.OneToOneField(Departamento, on_delete=models.PROTECT)
     fecha_venta = models.DateField()
-    monto = models.DecimalField(max_digits=12, decimal_places=2)
-    tipo_financiamiento = models.CharField(max_length=50)  # Hipotecario, etc
-    entidad_financiera = models.CharField(max_length=100, null=True, blank=True)
+
+    precio_lista = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
+    descuento_porcentaje = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Ej: 5.0 para 5%")
+    monto = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
+
+    tipo_financiamiento = models.CharField(
+        max_length=20,
+        choices=TIPOS_FINANCIAMIENTO,
+        default='Hipotecario'
+    )
+
+    entidad_financiera = models.CharField(max_length=100, null=True, blank=True,
+                                          help_text="Ej: BCP, BBVA (Solo si es Hipotecario)")
     porcentaje_financiado = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
 
     def save(self, *args, **kwargs):
-        # Al guardar una venta, marcar el depa como vendido automáticamente
+        self.precio_lista = self.departamento.tipo.precio_base
+        dinero_descontado = self.precio_lista * (self.descuento_porcentaje / Decimal(100))
+        self.monto = self.precio_lista - dinero_descontado
+
         self.departamento.estado_disponibilidad = 'Vendido'
         self.departamento.save()
-        super().save(*args, **kwargs)
 
+        super().save(*args, **kwargs)
 
 @receiver(post_save, sender=Venta)
 def verificar_meta_banco(sender, instance, created, **kwargs):
