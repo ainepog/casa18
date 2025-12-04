@@ -189,12 +189,15 @@ class CuotaInversion(models.Model):
     def __str__(self):
         return f"Cuota {self.nro_cuota} - {self.inversion.inversor}"
 
-    # --- PARA LA ALERTA (MVP) ---
-    # Esto mostrará un aviso en el panel si falta 1 día o si ya venció
     def alerta_estado(self):
-        if self.estado == 'Pagado':
-            return "Pagado"
+        # 1. PROTECCIÓN: Si no hay fecha programada (porque es nueva), no hacemos nada
+        if not self.fecha_programada:
+            return "—"
 
+        if self.estado == 'Pagado':
+            return " Pagado"
+
+        # Ahora sí es seguro restar porque sabemos que hay fecha
         dias_restantes = (self.fecha_programada - date.today()).days
 
         if dias_restantes < 0:
@@ -202,7 +205,7 @@ class CuotaInversion(models.Model):
         elif dias_restantes <= 1:
             return "Vence Mañana/Hoy"
         else:
-            return f"Faltan {dias_restantes} días"
+            return f" Faltan {dias_restantes} días"
 
 
 @receiver(post_save, sender=Inversion)
