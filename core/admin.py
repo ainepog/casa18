@@ -4,7 +4,7 @@ from .models import (
     Proyecto, Documento,
     Proveedor, Gasto, ProveedorProyecto,
     Inversor, Inversion, CuotaInversion,
-    TipoDepartamento, Departamento, Cliente, Venta
+    TipoDepartamento, Departamento, Cliente, Venta, ClienteProyecto
 )
 
 # ================================================
@@ -46,6 +46,7 @@ class InversionAdmin(admin.ModelAdmin):
 class TipoDepartamentoInline(admin.TabularInline):
     model = TipoDepartamento
     extra = 0
+    fields = ('nombre', 'area_m2', 'precio_base', 'descripcion')
 
 class ProyectoAdmin(admin.ModelAdmin):
     inlines = [TipoDepartamentoInline]
@@ -82,6 +83,8 @@ class DepartamentoAdmin(admin.ModelAdmin):
         return obj.tipo.precio_base
 
     ver_precio.short_description = "Precio Base"
+
+
 
 # ================================================
 # 3. CLIENTES, INVERSORES Y VENTAS
@@ -129,6 +132,21 @@ class VentaAdmin(admin.ModelAdmin):
         return f"S/ {obj.monto:,.2f}"
 
     ver_monto_final.short_description = "Monto Final"
+
+class InteresInline(admin.TabularInline):
+    model = ClienteProyecto
+    extra = 1
+    autocomplete_fields = ['proyecto']
+
+class ClienteAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'correo', 'telefono', 'ver_proyectos_interes')
+    search_fields = ('nombre', 'correo')
+    inlines = [InteresInline]
+
+    def ver_proyectos_interes(self, obj):
+        intereses = obj.clienteproyecto_set.all()
+        return ", ".join([i.proyecto.nombre for i in intereses])
+    ver_proyectos_interes.short_description = "Proyectos de Interés"
 
 # ================================================
 # 4. REGISTRO FINAL

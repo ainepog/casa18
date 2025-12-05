@@ -5,21 +5,28 @@ from decimal import Decimal
 import math
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-import holidays
-from datetime import timedelta, date
+from datetime import date, timedelta
+from .utils import obtener_feriados_peru
 
-pe_holidays = holidays.PE()
 
 def obtener_siguiente_dia_habil(fecha):
-    """
-    Si la fecha cae sábado (5), domingo (6) o Feriado,
-    se mueve al siguiente día laborable.
-    """
-    # Mientras sea fin de semana O sea feriado en Perú
-    while fecha.weekday() >= 5 or fecha in pe_holidays:
-        fecha += timedelta(days=1)
-    return fecha
+    if not fecha:
+        return date.today()
 
+    feriados_anio = obtener_feriados_peru(fecha.year)
+
+    if fecha.month == 12:
+        feriados_anio += obtener_feriados_peru(fecha.year + 1)
+
+    # 3. Validación
+    while fecha.weekday() >= 5 or fecha in feriados_anio:
+        fecha += timedelta(days=1)
+
+        # Si cambiamos de año en el bucle, recargamos la lista
+        if fecha.year != feriados_anio[0].year and fecha.month > 1:
+            feriados_anio = obtener_feriados_peru(fecha.year)
+
+    return fecha
 
 # --- UTILIDADES (Opciones para selectores) ---
 ESTADOS_PROYECTO = [('Planos', 'En Planos'),('Preventa', 'En Preventa'), ('Construccion', 'En Construcción'), ('Entregado', 'Entregado')]
@@ -30,6 +37,12 @@ TIPOS_FINANCIAMIENTO = [
     ('Hipotecario', 'Crédito Hipotecario (Banco)'),
     ('Directo', 'Crédito Directo (Inmobiliaria)'),
     ('Contado', 'Al Contado / Transferencia'),
+]
+ESTADOS_INTERES = [
+    ('Seguimiento', 'En Seguimiento (Frio/Tibio)'),
+    ('Negociacion', 'En Negociación (Caliente)'),
+    ('Comprado', 'VENTA CERRADA (Éxito)'),
+    ('Caido', 'Venta Caída / No Interesado')
 ]
 
 # ==========================================
@@ -85,6 +98,10 @@ class Proveedor(models.Model):
     telefono = models.CharField(max_length=20, null=True, blank=True)
     correo = models.EmailField(null=True, blank=True)
 
+    class Meta:
+        verbose_name = "Proveedor"
+        verbose_name_plural = "Proveedores"
+
     def __str__(self):
         return self.razon_social
 
@@ -125,9 +142,13 @@ class Inversor(models.Model):
     nombre_completo = models.CharField(max_length=200)
     tipo_doc = models.CharField(max_length=20, default='DNI')
     nro_doc = models.CharField(max_length=20, unique=True)
-    correo = models.EmailField()
+    correo = models.EmailField(null=True, blank=True)
     telefono = models.CharField(max_length=20, null=True, blank=True)
     direccion = models.TextField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Inversores"
+        verbose_name_plural = "Inversores"
 
     def __str__(self):
         return self.nombre_completo
@@ -166,6 +187,10 @@ class Inversion(models.Model):
             self.total_cuotas = int(self.plazo_meses / (self.dias_periodo / 30))
 
         super().save(*args, **kwargs)
+
+    class Meta:
+        verbose_name = "Inversión"
+        verbose_name_plural = "Inversiones"
 
     def __str__(self):
         return f"Inv {self.id} - {self.inversor}"
@@ -276,31 +301,41 @@ def verificar_fin_inversion(sender, instance, **kwargs):
 class TipoDepartamento(models.Model):
     proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE)
     nombre = models.CharField(max_length=100)  # Ej: Flat Tipo A
+
+    # 1. NUEVO: Aquí definimos el área "oficial" para este tipo de depa
+    area_m2 = models.DecimalField(max_digits=6, decimal_places=2, default=0, verbose_name="Área (m²)")
+
+    precio_base = models.DecimalField(max_digits=12, decimal_places=2, default=0, help_text="Precio sugerido")
     descripcion = models.TextField(blank=True)
     plano_modelo = models.URLField(blank=True, null=True)
-    precio_base = models.DecimalField(max_digits=12, decimal_places=2, default=0,
-                                      help_text="Precio sugerido para todos los depas de este tipo")
 
     def __str__(self):
-        return f"{self.nombre} - {self.proyecto}"
+        return f"{self.nombre} ({self.area_m2} m²)"
 
 
 class Departamento(models.Model):
     tipo = models.ForeignKey(TipoDepartamento, on_delete=models.CASCADE)
-    nro = models.CharField(max_length=20)  # 301
-    area_m2 = models.DecimalField(max_digits=6, decimal_places=2)
+    nro = models.CharField(max_length=20)
+    piso = models.IntegerField(default=1)
+
+    # 2. CAMBIO: Ahora es opcional (blank=True).
+    # Si lo dejas vacío, hereda del Tipo. Si lo llenas, manda este valor (útil para terrazas).
+    area_m2 = models.DecimalField(max_digits=6, decimal_places=2, blank=True, null=True, verbose_name="Área Propia")
+
     estado_disponibilidad = models.CharField(max_length=20, choices=ESTADO_DISPONIBILIDAD, default='Disponible')
 
     class Meta:
         unique_together = ('tipo', 'nro')
 
     def save(self, *args, **kwargs):
-        if not self.precio:
-            self.precio = self.tipo.precio_base
+        # Lógica de Herencia de Área
+        if not self.area_m2:
+            self.area_m2 = self.tipo.area_m2  # <--- AQUÍ OCURRE LA MAGIA
+
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"Dpto {self.nro} ({self.estado_disponibilidad})"
+        return f"Dpto {self.nro} - {self.tipo.nombre}"
 
 
 class Cliente(models.Model):
@@ -316,7 +351,16 @@ class ClienteProyecto(models.Model):
     cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
     proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE)
     fecha_interes = models.DateField(auto_now_add=True)
-    estado_interes = models.CharField(max_length=50, default='Seguimiento')
+    estado_interes = models.CharField(max_length=50, choices=ESTADOS_INTERES, default='Seguimiento')
+    observaciones = models.TextField(blank=True, help_text="Notas del vendedor: 'Quiere vista al mar', 'Llamar el martes'")
+
+    class Meta:
+        unique_together = ('cliente', 'proyecto') # Un cliente solo tiene 1 ficha por proyecto
+        verbose_name = "Interés / Lead"
+        verbose_name_plural = "Intereses / Leads"
+
+    def __str__(self):
+        return f"{self.cliente} en {self.proyecto} ({self.estado_interes})"
 
 
 class Venta(models.Model):
@@ -374,3 +418,27 @@ def verificar_meta_banco(sender, instance, created, **kwargs):
                 cambios = True
             if cambios:
                 proyecto.save()
+
+
+@receiver(post_save, sender=Venta)
+def actualizar_crm_post_venta(sender, instance, created, **kwargs):
+    """
+    Cuando se registra una VENTA, busca si el cliente tenía un registro de interés
+    en ese proyecto y lo marca automáticamente como 'Comprado'.
+    """
+    if created:
+        cliente_venta = instance.cliente
+        # Ruta larga para hallar el proyecto: Venta -> Depa -> Tipo -> Proyecto
+        proyecto_venta = instance.departamento.tipo.proyecto
+
+        # Buscamos si existía el interés previo (get_or_create por si fue venta directa sin lead previo)
+        interes_obj, fue_creado = ClienteProyecto.objects.get_or_create(
+            cliente=cliente_venta,
+            proyecto=proyecto_venta
+        )
+
+        # Actualizamos el estado a Éxito
+        interes_obj.estado_interes = 'Comprado'
+        interes_obj.observaciones += f"\n[AUTO] Compró el Dpto {instance.departamento.nro} el {instance.fecha_venta}."
+        interes_obj.save()
+        print(f" CRM Actualizado: {cliente_venta} ahora figura como COMPRADOR en {proyecto_venta}")
