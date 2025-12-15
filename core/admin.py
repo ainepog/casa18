@@ -14,30 +14,31 @@ from .models import (
 class CuotaInversionInline(admin.TabularInline):
     model = CuotaInversion
     extra = 0
-    readonly_fields = ('fecha_programada', 'total_pagar', 'alerta_estado')
-    fields = ('nro_cuota', 'fecha_programada', 'alerta_estado', 'total_pagar', 'estado', 'fecha_pago_real')
     can_delete = False
+
+    fields = ('nro_cuota', 'interes_bruto', 'monto_impuesto', 'interes_neto',
+              'amortizacion_capital', 'total_pagar', 'fecha_programada', 'alerta_estado')
+
+    readonly_fields = fields  # Nadie toca los números, son automáticos
 
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
         if db_field.name == 'alerta_estado':
-            formfield.widget = forms.TextInput(attrs={'readonly':'readonly', 'style': 'border:none; background:none; font-weight:bold;'})
+            formfield.widget = forms.TextInput(attrs={
+                'readonly': 'readonly',
+                'style': 'border:none; background:none; font-weight:bold; font-size:1.1em;'
+            })
         return formfield
 
+
+# --- CONFIGURACIÓN DE INVERSIÓN ---
 class InversionAdmin(admin.ModelAdmin):
     inlines = [CuotaInversionInline]
-    # Usamos los nombres reales de tus modelos
-    list_display = ('id', 'inversor', 'proyecto_nombre', 'capital_monto', 'estado', 'ver_progreso')
-    list_filter = ('estado', 'proyecto')
-    search_fields = ('inversor__nombre_completo',)
-    autocomplete_fields = ['inversor', 'proyecto']
 
-    def proyecto_nombre(self, obj): return obj.proyecto.nombre
+    list_display = ('id', 'inversor', 'proyecto', 'capital_monto', 'fecha_desembolso', 'estado')
+    list_filter = ('estado', 'proyecto', 'frecuencia_nombre')
+    search_fields = ('inversor__nombre', 'id')
 
-    def ver_progreso(self, obj):
-        pagadas = obj.cuotas.filter(estado='Pagado').count()
-        total = obj.total_cuotas
-        return f"{pagadas}/{total}"
 
 # ================================================
 # 2. PROYECTOS Y DEPARTAMENTOS
@@ -55,7 +56,7 @@ class ProyectoAdmin(admin.ModelAdmin):
     list_filter = ('estado', 'banco_activado')
 
     def banco_activado_check(self, obj):
-        return "✅ SÍ" if obj.banco_activado else "❌ NO"
+        return "SÍ" if obj.banco_activado else "NO"
     banco_activado_check.short_description = "Banco OK"
 
 
@@ -92,11 +93,11 @@ class DepartamentoAdmin(admin.ModelAdmin):
 
 class ClienteAdmin(admin.ModelAdmin):
     list_display = ('nombre', 'correo', 'telefono')
-    search_fields = ('nombre', 'correo') # Necesario para el autocomplete
+    search_fields = ('nombre', 'correo')
 
 class InversorAdmin(admin.ModelAdmin):
     list_display = ('nombre_completo', 'nro_doc', 'correo', 'telefono')
-    search_fields = ('nombre_completo', 'nro_doc') # Necesario para el autocomplete
+    search_fields = ('nombre_completo', 'nro_doc')
 
 
 class VentaAdmin(admin.ModelAdmin):
@@ -159,7 +160,6 @@ admin.site.register(Cliente, ClienteAdmin)
 admin.site.register(Inversor, InversorAdmin)
 admin.site.register(Venta, VentaAdmin)
 
-# Registros simples
 admin.site.register(Proveedor)
 admin.site.register(Gasto)
 admin.site.register(TipoDepartamento)

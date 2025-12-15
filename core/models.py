@@ -3,11 +3,11 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from decimal import Decimal
 import math
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from datetime import date, timedelta
 from .utils import obtener_feriados_peru
-
+from decimal import Decimal
 
 def obtener_siguiente_dia_habil(fecha):
     if not fecha:
@@ -155,144 +155,140 @@ class Inversor(models.Model):
 
 
 class Inversion(models.Model):
-    inversor = models.ForeignKey(Inversor, on_delete=models.CASCADE)
-    proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE)
+    inversor = models.ForeignKey('Inversor', on_delete=models.CASCADE)
+    proyecto = models.ForeignKey('Proyecto', on_delete=models.CASCADE)
+
     capital_monto = models.DecimalField(max_digits=12, decimal_places=2)
     fecha_desembolso = models.DateField()
-    tea_anual = models.DecimalField(max_digits=5, decimal_places=4)
+    tea_anual = models.DecimalField(max_digits=5, decimal_places=2)
     plazo_meses = models.IntegerField()
-    frecuencia_nombre = models.CharField(max_length=20, choices=FRECUENCIA_PAGO)
-
-    dias_periodo = models.IntegerField(editable=False, default=0)
-    tasa_periodo = models.DecimalField(max_digits=10, decimal_places=6, editable=False, default=0)
-    total_cuotas = models.IntegerField(editable=False, default=0)
-
-    # Estados: Activo, Cancelado (Pagado Total), Mora
+    frecuencia_nombre = models.CharField(max_length=20, choices=[('Mensual', 'Mensual'), ('Trimestral', 'Trimestral')])
     estado = models.CharField(max_length=20, default='Activo')
 
-    def save(self, *args, **kwargs):
-        # ... (Tu lógica de cálculo de tasas se mantiene igual) ...
-        if self.frecuencia_nombre == 'Mensual':
-            self.dias_periodo = 30
-        elif self.frecuencia_nombre == 'Bimestral':
-            self.dias_periodo = 60
-        elif self.frecuencia_nombre == 'Trimestral':
-            self.dias_periodo = 90
-
-        base = Decimal(1) + self.tea_anual
-        exponente = Decimal(self.dias_periodo) / Decimal(360)
-        self.tasa_periodo = Decimal(math.pow(float(base), float(exponente))) - 1
-
-        if self.dias_periodo > 0:
-            self.total_cuotas = int(self.plazo_meses / (self.dias_periodo / 30))
-
-        super().save(*args, **kwargs)
-
     class Meta:
-        verbose_name = "Inversión"
+        verbose_name = "Inversiones"
         verbose_name_plural = "Inversiones"
 
     def __str__(self):
         return f"Inv {self.id} - {self.inversor}"
 
+    def generar_cronograma_pagos(self):
+        self.cuotas.all().delete()
+
+        tea_valor = float(self.tea_anual)
+        tea_decimal = tea_valor / 100.0 if tea_valor >= 1.0 else tea_valor
+        tasa_diaria = (1 + tea_decimal) ** (1 / 360) - 1
+        dias_por_periodo = 90 if self.frecuencia_nombre == 'Trimestral' else 30
+
+        fecha_anterior = self.fecha_desembolso
+        num_cuotas = int(self.plazo_meses / (3 if dias_por_periodo == 90 else 1))
+        hoy = date.today()
+
+        for i in range(1, num_cuotas + 1):
+            fecha_tentativa = fecha_anterior + timedelta(days=dias_por_periodo)
+            fecha_final = obtener_siguiente_dia_habil(fecha_tentativa)
+            dias_reales = (fecha_final - fecha_anterior).days
+
+            capital_float = float(self.capital_monto)
+            interes_bruto_val = capital_float * tasa_diaria * dias_reales
+            impuesto_val = interes_bruto_val * 0.05
+            interes_neto_val = interes_bruto_val - impuesto_val
+
+            es_ultima = (i == num_cuotas)
+            amortizacion_val = capital_float if es_ultima else 0.0
+            total_val = interes_neto_val + amortizacion_val
+
+            estado_inicial = 'Pagado' if fecha_final < hoy else 'Pendiente'
+
+            CuotaInversion.objects.create(
+                inversion=self,
+                nro_cuota=i,
+                fecha_programada=fecha_final,
+                dias_periodo=dias_reales,
+                saldo_capital=self.capital_monto,
+                interes_bruto=Decimal(f"{interes_bruto_val:.2f}"),
+                monto_impuesto=Decimal(f"{impuesto_val:.2f}"),
+                interes_neto=Decimal(f"{interes_neto_val:.2f}"),
+                amortizacion_capital=Decimal(f"{amortizacion_val:.2f}"),
+                total_pagar=Decimal(f"{total_val:.2f}"),
+                es_ultima_cuota=es_ultima,
+                estado=estado_inicial
+            )
+
+            fecha_anterior = fecha_final
+            self.actualizar_estado_general()
+
+    def actualizar_estado_general(self):
+        hay_pendientes = self.cuotas.filter(estado='Pendiente').exists()
+        nuevo_estado = 'Activo' if hay_pendientes else 'Finalizado'
+        Inversion.objects.filter(id=self.id).update(estado=nuevo_estado)
+
 
 class CuotaInversion(models.Model):
     inversion = models.ForeignKey(Inversion, related_name='cuotas', on_delete=models.CASCADE)
     nro_cuota = models.IntegerField()
-    fecha_programada = models.DateField()  # Esta se calculará evitando feriados
-    fecha_pago_real = models.DateField(null=True, blank=True)  # Cuándo pagó de verdad
+    fecha_programada = models.DateField()
+    fecha_pago_real = models.DateField(null=True, blank=True)
+    dias_periodo = models.IntegerField(default=0, verbose_name="Días")
+
+    saldo_capital = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    interes_bruto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Int. Bruto")
+    monto_impuesto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Impuesto (5%)")
+    interes_neto = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Int. Neto")
+    amortizacion_capital = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Amortización")
+    total_pagar = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="A Pagar")
 
     es_ultima_cuota = models.BooleanField(default=False)
-
-    saldo_capital = models.DecimalField(max_digits=12, decimal_places=2)
-    interes_bruto = models.DecimalField(max_digits=12, decimal_places=2)
-    monto_impuesto = models.DecimalField(max_digits=12, decimal_places=2)
-    interes_neto = models.DecimalField(max_digits=12, decimal_places=2)
-    amortizacion_capital = models.DecimalField(max_digits=12, decimal_places=2)
-    total_pagar = models.DecimalField(max_digits=12, decimal_places=2)
-
-    # Estado: Pendiente -> Pagado
-    estado = models.CharField(max_length=20, default='Pendiente',
-                              choices=[('Pendiente', 'Pendiente'), ('Pagado', 'Pagado')])
-
-    def __str__(self):
-        return f"Cuota {self.nro_cuota} - {self.inversion.inversor}"
+    estado = models.CharField(max_length=20, choices=[('Pendiente', 'Pendiente'), ('Pagado', 'Pagado')],
+                              default='Pendiente')
+    comprobante = models.FileField(upload_to='comprobantes/', null=True, blank=True)
 
     def alerta_estado(self):
-        # 1. PROTECCIÓN: Si no hay fecha programada (porque es nueva), no hacemos nada
-        if not self.fecha_programada:
-            return "—"
+        if not self.fecha_programada: return "—"
+        if self.estado == 'Pagado': return "Pagado"
 
-        if self.estado == 'Pagado':
-            return " Pagado"
-
-        # Ahora sí es seguro restar porque sabemos que hay fecha
         dias_restantes = (self.fecha_programada - date.today()).days
 
         if dias_restantes < 0:
-            return "VENCIDO"
+            return f"VENCIDO hace ({abs(dias_restantes)} días)"
         elif dias_restantes <= 1:
-            return "Vence Mañana/Hoy"
+            return "Vence Pronto"
         else:
-            return f" Faltan {dias_restantes} días"
+            return f"Faltan {dias_restantes} días"
 
-
-@receiver(post_save, sender=Inversion)
-def generar_cronograma_pagos(sender, instance, created, **kwargs):
-    if created:
-        # Solo si es nueva inversión, generamos las cuotas
-        saldo_actual = instance.capital_monto
-        fecha_base = instance.fecha_desembolso
-
-        for i in range(1, instance.total_cuotas + 1):
-            # 1. Calcular Fecha (Sumar días según periodo: 30, 60, 90...)
-            dias_a_sumar = instance.dias_periodo * i
-            fecha_tentativa = fecha_base + timedelta(days=dias_a_sumar)
-
-            # 2. APLICAR LÓGICA PERÚ (Evitar feriados/findes)
-            fecha_final = obtener_siguiente_dia_habil(fecha_tentativa)
-
-            # 3. Determinar si es última cuota
-            es_ultima = (i == instance.total_cuotas)
-
-            # 4. Cálculos Financieros
-            interes_bruto = saldo_actual * instance.tasa_periodo
-            impuesto = interes_bruto * Decimal(0.05)  # 5% Renta
-            interes_neto = interes_bruto - impuesto
-
-            # Bullet: Solo amortiza capital al final
-            amortizacion = saldo_actual if es_ultima else Decimal(0)
-            total = interes_neto + amortizacion
-
-            # 5. Crear la Cuota en BD
-            CuotaInversion.objects.create(
-                inversion=instance,
-                nro_cuota=i,
-                fecha_programada=fecha_final,
-                es_ultima_cuota=es_ultima,
-                saldo_capital=saldo_actual,
-                interes_bruto=round(interes_bruto, 2),
-                monto_impuesto=round(impuesto, 2),
-                interes_neto=round(interes_neto, 2),
-                amortizacion_capital=round(amortizacion, 2),
-                total_pagar=round(total, 2),
-                estado='Pendiente'
-            )
+    def __str__(self):
+        return f"Cuota #{self.nro_cuota}"
 
 @receiver(post_save, sender=CuotaInversion)
 def verificar_fin_inversion(sender, instance, **kwargs):
     if instance.estado == 'Pagado':
-        # Buscamos la inversión padre
         inv_padre = instance.inversion
 
-        # Contamos cuántas cuotas quedan pendientes
-        pendientes = inv_padre.cuotas.filter(estado='Pendiente').count()
+        pendientes = inv_padre.cuotas.filter(estado='Pendiente').exists()
 
-        # Si ya no hay pendientes, cerramos el contrato
-        if pendientes == 0:
-            inv_padre.estado = 'Cancelado'  # O 'Finalizado'
-            inv_padre.save()
-            print(f"Inversión {inv_padre.id} completada y cancelada")
+        if not pendientes:
+            Inversion.objects.filter(id=inv_padre.id).update(estado='Finalizado')
+            print(f"Inversión {inv_padre.id} finalizada")
+
+@receiver(post_save, sender=Inversion)
+def trigger_generar_cronograma(sender, instance, created, **kwargs):
+    if instance.estado == 'Finalizado':
+        return
+
+    if instance.capital_monto and instance.fecha_desembolso:
+         instance.generar_cronograma_pagos()
+
+@receiver(post_save, sender=Inversion)
+def al_guardar_inversion(sender, instance, created, **kwargs):
+    if instance.capital_monto and instance.fecha_desembolso:
+        instance.generar_cronograma_pagos()
+
+@receiver([post_save, post_delete], sender=CuotaInversion)
+def al_cambiar_cuota(sender, instance, **kwargs):
+    try:
+        instance.inversion.actualizar_estado_general()
+    except Inversion.DoesNotExist:
+        pass
 
 # ==========================================
 # MÓDULO 3: VENTAS Y CLIENTES (CRM)
@@ -422,10 +418,6 @@ def verificar_meta_banco(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=Venta)
 def actualizar_crm_post_venta(sender, instance, created, **kwargs):
-    """
-    Cuando se registra una VENTA, busca si el cliente tenía un registro de interés
-    en ese proyecto y lo marca automáticamente como 'Comprado'.
-    """
     if created:
         cliente_venta = instance.cliente
         # Ruta larga para hallar el proyecto: Venta -> Depa -> Tipo -> Proyecto
