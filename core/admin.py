@@ -9,7 +9,6 @@ from .models import (
 
 
 def formato_dinero(monto, moneda):
-
     if monto is None: return "0.00"
     simbolo = 'S/' if moneda == 'PEN' else '$'
     return f"{simbolo} {monto:,.2f}"
@@ -21,12 +20,12 @@ def formato_dinero(monto, moneda):
 
 class ClienteAdmin(admin.ModelAdmin):
     list_display = ('nombre', 'correo', 'telefono', 'ver_proyectos_interes')
-    search_fields = ('nombre', 'correo', 'telefono')
+    search_fields = ('nombre', 'correo', 'telefono')  # MANTENIDO
 
     class InteresInline(admin.TabularInline):
         model = ClienteProyecto
         extra = 1
-        autocomplete_fields = ['proyecto']
+        autocomplete_fields = ['proyecto']  # Requiere search_fields en Proyecto
 
     inlines = [InteresInline]
 
@@ -41,12 +40,19 @@ class ProyectoAdmin(admin.ModelAdmin):
     class TipoDepartamentoInline(admin.TabularInline):
         model = TipoDepartamento
         extra = 0
-        fields = ('nombre', 'area_m2', 'precio_base')
+        # Agregamos plano_modelo que pediste
+        fields = ('nombre', 'area_m2', 'precio_base', 'plano_modelo')
 
     inlines = [TipoDepartamentoInline]
-    list_display = ('nombre', 'estado', 'total_unidades', 'banco_activado_check')
-    search_fields = ('nombre',)
+    # Agregamos ver_disponibles
+    list_display = ('nombre', 'estado', 'ver_disponibles', 'total_unidades', 'banco_activado_check')
+    search_fields = ('nombre',)  # MANTENIDO
     list_filter = ('estado', 'banco_activado')
+
+    def ver_disponibles(self, obj):
+        return f"{obj.unidades_disponibles()} / {obj.total_unidades}"
+
+    ver_disponibles.short_description = "Und. Disp."
 
     def banco_activado_check(self, obj):
         return "SÍ" if obj.banco_activado else "NO"
@@ -55,9 +61,10 @@ class ProyectoAdmin(admin.ModelAdmin):
 
 
 class DepartamentoAdmin(admin.ModelAdmin):
-    list_display = ('nro', 'obtener_proyecto', 'tipo', 'ver_precio', 'estado_disponibilidad')
+    # Agregamos ver_area para que se vea el m2 del tipo
+    list_display = ('nro', 'obtener_proyecto', 'tipo', 'ver_area', 'ver_precio', 'estado_disponibilidad')
     list_filter = ('estado_disponibilidad', 'tipo__proyecto')
-    search_fields = ('nro',)
+    search_fields = ('nro',)  # MANTENIDO
 
     def obtener_proyecto(self, obj):
         return obj.tipo.proyecto.nombre
@@ -69,15 +76,23 @@ class DepartamentoAdmin(admin.ModelAdmin):
 
     ver_precio.short_description = "Precio Base"
 
+    def ver_area(self, obj):
+        return f"{obj.tipo.area_m2} m²"
+
+    ver_area.short_description = "Área"
+
 
 class InversorAdmin(admin.ModelAdmin):
-    list_display = ('nombre_completo', 'nro_doc', 'correo', 'telefono')
-    search_fields = ('nombre_completo', 'nro_doc')
+    # Agregamos tipo_documento
+    list_display = ('nombre_completo', 'tipo_documento', 'nro_doc', 'telefono')
+    list_filter = ('tipo_documento',)
+    search_fields = ('nombre_completo', 'nro_doc')  # MANTENIDO
 
 
 class ProveedorAdmin(admin.ModelAdmin):
     list_display = ('razon_social', 'ruc', 'tipo_servicio')
-    search_fields = ('razon_social', 'ruc')
+    search_fields = ('razon_social', 'ruc')  # MANTENIDO
+
 
 # ================================================
 # 2. INVERSIONES Y CUOTAS
@@ -87,10 +102,8 @@ class CuotaInversionInline(admin.TabularInline):
     model = CuotaInversion
     extra = 0
     can_delete = False
-
     fields = ('nro_cuota', 'ver_bruto', 'ver_impuesto', 'ver_neto',
               'ver_amortizacion', 'ver_total', 'fecha_programada', 'alerta_estado')
-
     readonly_fields = fields
 
     def ver_bruto(self, obj): return formato_dinero(obj.interes_bruto, obj.inversion.moneda)
@@ -127,10 +140,13 @@ class CuotaInversionInline(admin.TabularInline):
 class InversionAdmin(admin.ModelAdmin):
     inlines = [CuotaInversionInline]
     list_display = ('id', 'inversor', 'proyecto', 'ver_capital', 'fecha_desembolso', 'estado')
-    list_filter = ('proyecto', 'estado', 'moneda', 'frecuencia_nombre')
-    search_fields = ('inversor__nombre_completo', 'id')
 
-    autocomplete_fields = ['inversor', 'proyecto']
+    # CORRECCIÓN IMPORTANTE: cambiamos 'frecuencia_nombre' a 'frecuencia'
+    list_filter = ('proyecto', 'estado', 'moneda', 'frecuencia')
+
+    search_fields = ('inversor__nombre_completo', 'id')  # MANTENIDO
+
+    autocomplete_fields = ['inversor', 'proyecto']  # Requiere search_fields en Inversor y Proyecto
 
     save_on_top = True
 
@@ -145,7 +161,7 @@ class InversionAdmin(admin.ModelAdmin):
 class CuotaInversionAdmin(admin.ModelAdmin):
     list_display = ('ver_info', 'nro_cuota', 'fecha_programada', 'ver_monto', 'alerta_visual', 'estado')
     list_filter = ('estado', 'fecha_programada', 'inversion__proyecto', 'inversion__moneda')
-    search_fields = ('inversion__inversor__nombre_completo',)
+    search_fields = ('inversion__inversor__nombre_completo',)  # MANTENIDO
     date_hierarchy = 'fecha_programada'
     ordering = ('fecha_programada',)
 
@@ -167,11 +183,12 @@ class CuotaInversionAdmin(admin.ModelAdmin):
 # 4. GASTOS Y VENTAS
 # ================================================
 class GastoAdmin(admin.ModelAdmin):
-    list_display = ('descripcion', 'proyecto', 'fecha_gasto', 'ver_monto', 'tipo_gasto')
-    list_filter = ('proyecto', 'moneda', 'tipo_gasto')
-    search_fields = ('descripcion', 'proveedor__razon_social')
+    # Agregamos 'estado'
+    list_display = ('descripcion', 'proyecto', 'fecha_gasto', 'ver_monto', 'estado', 'tipo_gasto')
+    list_filter = ('proyecto', 'moneda', 'estado', 'tipo_gasto')
+    search_fields = ('descripcion', 'proveedor__razon_social')  # MANTENIDO
 
-    autocomplete_fields = ['proveedor', 'proyecto']
+    autocomplete_fields = ['proveedor', 'proyecto']  # Requiere search_fields en Proveedor y Proyecto
 
     @admin.display(description='Monto')
     def ver_monto(self, obj): return formato_dinero(obj.monto, obj.moneda)
@@ -181,6 +198,7 @@ class VentaAdmin(admin.ModelAdmin):
     list_display = ('cliente', 'departamento', 'fecha_venta', 'ver_precio', 'tipo_financiamiento')
     list_filter = ('fecha_venta', 'tipo_financiamiento')
 
+    # Requiere search_fields en Cliente y Departamento (ya están definidos arriba)
     autocomplete_fields = ['cliente', 'departamento']
 
     fields = (
@@ -201,7 +219,6 @@ class VentaAdmin(admin.ModelAdmin):
 
 class ProveedorProyectoAdmin(admin.ModelAdmin):
     list_display = ('proveedor', 'proyecto', 'tipo_contrato', 'ver_monto')
-
     autocomplete_fields = ['proveedor', 'proyecto']
 
     @admin.display(description='Monto Contrato')
