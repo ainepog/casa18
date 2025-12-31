@@ -21,15 +21,17 @@ def obtener_siguiente_dia_habil(fecha):
     # 3. Validación
     while fecha.weekday() >= 5 or fecha in feriados_anio:
         fecha += timedelta(days=1)
-
         # Si cambiamos de año en el bucle, recargamos la lista
         if fecha.year != feriados_anio[0].year and fecha.month > 1:
             feriados_anio = obtener_feriados_peru(fecha.year)
-
     return fecha
 
 # --- UTILIDADES (Opciones para selectores) ---
-ESTADOS_PROYECTO = [('Planos', 'En Planos'),('Preventa', 'En Preventa'), ('Construccion', 'En Construcción'), ('Entregado', 'Entregado')]
+ESTADOS_PROYECTO = [
+    ('Planos', 'En Planos'),
+    ('Preventa', 'En Preventa'),
+    ('Construccion', 'En Construcción'),
+    ('Entregado', 'Entregado')]
 TIPO_GASTO = [('Directo', 'Gasto Directo'), ('Indirecto', 'Gasto Indirecto')]
 FRECUENCIA_PAGO = [('Mensual', 'Mensual'), ('Bimestral', 'Bimestral'), ('Trimestral', 'Trimestral')]
 ESTADO_DISPONIBILIDAD = [('Disponible', 'Disponible'), ('Separado', 'Separado'), ('Vendido', 'Vendido')]
@@ -44,7 +46,10 @@ ESTADOS_INTERES = [
     ('Comprado', 'VENTA CERRADA (Éxito)'),
     ('Caido', 'Venta Caída / No Interesado')
 ]
-
+OPCIONES_MONEDA = [
+    ('PEN', 'S/ Soles'),
+    ('USD', '$ Dólares'),
+]
 # ==========================================
 # MÓDULO CENTRAL (PROYECTOS)
 # ==========================================
@@ -110,6 +115,7 @@ class ProveedorProyecto(models.Model):
     proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE)
     proveedor = models.ForeignKey(Proveedor, on_delete=models.CASCADE)
     tipo_contrato = models.CharField(max_length=100)
+    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA, default='USD')
     monto_estimado = models.DecimalField(max_digits=12, decimal_places=2)
     fecha_inicio = models.DateField()
     fecha_fin = models.DateField(null=True, blank=True)
@@ -123,11 +129,13 @@ class Gasto(models.Model):
     proveedor = models.ForeignKey(Proveedor, on_delete=models.SET_NULL, null=True, blank=True)
     tipo_gasto = models.CharField(max_length=20, choices=TIPO_GASTO)
     descripcion = models.CharField(max_length=255)
+    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA, default='USD')
+    monto_estimado = models.DecimalField(max_digits=12, decimal_places=2)
     monto = models.DecimalField(max_digits=12, decimal_places=2)
     fecha_gasto = models.DateField()
     nro_comprobante = models.CharField(max_length=50, null=True, blank=True)
     url_comprobante = models.FileField(upload_to='comprobantes/', null=True,
-                                       blank=True)  # Ojo: En Railway requiere config extra, usar URLField si quieres simpleza
+                                       blank=True)
     estado = models.CharField(max_length=50, default='Pagado')
 
     def __str__(self):
@@ -159,6 +167,7 @@ class Inversion(models.Model):
     proyecto = models.ForeignKey('Proyecto', on_delete=models.CASCADE)
 
     capital_monto = models.DecimalField(max_digits=12, decimal_places=2)
+    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA, default='USD')
     fecha_desembolso = models.DateField()
     tea_anual = models.DecimalField(max_digits=5, decimal_places=2)
     plazo_meses = models.IntegerField()
@@ -367,6 +376,7 @@ class Venta(models.Model):
     precio_lista = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
     descuento_porcentaje = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Ej: 5.0 para 5%")
     monto = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
+    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA, default='USD')
 
     tipo_financiamiento = models.CharField(
         max_length=20,
