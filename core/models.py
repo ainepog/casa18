@@ -364,3 +364,9 @@ def acciones_post_venta(sender, instance, created, **kwargs):
                 cambios = True
             if cambios:
                 proyecto.save()
+
+class AgendaPagos(CuotaInversion):
+    class Meta:
+        proxy = True
+        verbose_name = "Calendario de Pagos"
+        verbose_name_plural = "Calendario de Pagos"

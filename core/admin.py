@@ -3,7 +3,7 @@ from django import forms
 from django.utils.html import format_html
 from .models import (
     Proyecto, Documento, Proveedor, Gasto, ProveedorProyecto,
-    Inversor, Inversion, CuotaInversion,
+    Inversor, Inversion, CuotaInversion, AgendaPagos,  # <--- IMPORTANTE: Agregamos AgendaPagos
     TipoDepartamento, Departamento, Cliente, Venta, ClienteProyecto
 )
 
@@ -15,7 +15,7 @@ def formato_dinero(monto, moneda):
 
 
 # ================================================
-# 1. MODELOS BASE
+# 1. MODELOS BASE (Con Search Fields Obligatorios)
 # ================================================
 
 class ClienteAdmin(admin.ModelAdmin):
@@ -40,11 +40,9 @@ class ProyectoAdmin(admin.ModelAdmin):
     class TipoDepartamentoInline(admin.TabularInline):
         model = TipoDepartamento
         extra = 0
-        # Agregamos plano_modelo que pediste
         fields = ('nombre', 'area_m2', 'precio_base', 'plano_modelo')
 
     inlines = [TipoDepartamentoInline]
-    # Agregamos ver_disponibles
     list_display = ('nombre', 'estado', 'ver_disponibles', 'total_unidades', 'banco_activado_check')
     search_fields = ('nombre',)  # MANTENIDO
     list_filter = ('estado', 'banco_activado')
@@ -61,7 +59,6 @@ class ProyectoAdmin(admin.ModelAdmin):
 
 
 class DepartamentoAdmin(admin.ModelAdmin):
-    # Agregamos ver_area para que se vea el m2 del tipo
     list_display = ('nro', 'obtener_proyecto', 'tipo', 'ver_area', 'ver_precio', 'estado_disponibilidad')
     list_filter = ('estado_disponibilidad', 'tipo__proyecto')
     search_fields = ('nro',)  # MANTENIDO
@@ -83,7 +80,6 @@ class DepartamentoAdmin(admin.ModelAdmin):
 
 
 class InversorAdmin(admin.ModelAdmin):
-    # Agregamos tipo_documento
     list_display = ('nombre_completo', 'tipo_documento', 'nro_doc', 'telefono')
     list_filter = ('tipo_documento',)
     search_fields = ('nombre_completo', 'nro_doc')  # MANTENIDO
@@ -95,10 +91,14 @@ class ProveedorAdmin(admin.ModelAdmin):
 
 
 # ================================================
-# 2. INVERSIONES Y CUOTAS
+# 2. INVERSIONES (Gestión del Contrato)
 # ================================================
 
 class CuotaInversionInline(admin.TabularInline):
+    """
+    Esto es lo que ves DENTRO de la Inversión.
+    Aquí sí mostramos todas las cuotas (pagadas y pendientes).
+    """
     model = CuotaInversion
     extra = 0
     can_delete = False
@@ -140,14 +140,9 @@ class CuotaInversionInline(admin.TabularInline):
 class InversionAdmin(admin.ModelAdmin):
     inlines = [CuotaInversionInline]
     list_display = ('id', 'inversor', 'proyecto', 'ver_capital', 'fecha_desembolso', 'estado')
-
-    # CORRECCIÓN IMPORTANTE: cambiamos 'frecuencia_nombre' a 'frecuencia'
     list_filter = ('proyecto', 'estado', 'moneda', 'frecuencia')
-
     search_fields = ('inversor__nombre_completo', 'id')  # MANTENIDO
-
-    autocomplete_fields = ['inversor', 'proyecto']  # Requiere search_fields en Inversor y Proyecto
-
+    autocomplete_fields = ['inversor', 'proyecto']
     save_on_top = True
 
     @admin.display(description='Capital', ordering='capital_monto')
@@ -156,39 +151,64 @@ class InversionAdmin(admin.ModelAdmin):
 
 
 # ================================================
-# 3. DASHBOARD DE PAGOS
+# 3. AGENDA DE PAGOS (El Nuevo Calendario) 📅
 # ================================================
-class CuotaInversionAdmin(admin.ModelAdmin):
-    list_display = ('ver_info', 'nro_cuota', 'fecha_programada', 'ver_monto', 'alerta_visual', 'estado')
-    list_filter = ('estado', 'fecha_programada', 'inversion__proyecto', 'inversion__moneda')
-    search_fields = ('inversion__inversor__nombre_completo',)  # MANTENIDO
-    date_hierarchy = 'fecha_programada'
-    ordering = ('fecha_programada',)
 
-    def ver_info(self, obj): return f"{obj.inversion.inversor} ({obj.inversion.proyecto.nombre})"
+class AgendaPagosAdmin(admin.ModelAdmin):
+    """
+    Esta vista reemplaza a la lista genérica de cuotas.
+    Solo muestra lo PENDIENTE y permite navegar por fechas.
+    """
+    list_display = ('ver_fecha_top', 'ver_info', 'nro_cuota', 'ver_monto', 'alerta_visual')
+
+    # Filtro Mágico: Ocultamos lo pagado para no hacer ruido
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(estado='Pendiente')
+
+    # Barra de navegación por fechas (Año > Mes)
+    date_hierarchy = 'fecha_programada'
+
+    list_filter = ('fecha_programada', 'inversion__proyecto', 'inversion__moneda')
+    search_fields = ('inversion__inversor__nombre_completo',)  # MANTENIDO
+    ordering = ('fecha_programada',)  # Lo más urgente primero
+    list_per_page = 20
+
+    # --- Visuales ---
+    def ver_fecha_top(self, obj):
+        # Si no hay fecha (error raro), mostramos guion
+        if not obj.fecha_programada: return "-"
+        return obj.fecha_programada.strftime("%d %b %Y")  # Ej: 15 Oct 2025
+
+    ver_fecha_top.short_description = "Vencimiento"
+    ver_fecha_top.admin_order_field = 'fecha_programada'
+
+    def ver_info(self, obj):
+        return f"{obj.inversion.inversor} ({obj.inversion.proyecto.nombre})"
 
     ver_info.short_description = "Inversor / Proyecto"
 
     def ver_monto(self, obj):
-        return format_html("<b>{}</b>", formato_dinero(obj.total_pagar, obj.inversion.moneda))
+        # Color verde y negrita para que resalte la deuda
+        return format_html(
+            "<span style='color:green; font-weight:bold'>{}</span>",
+            formato_dinero(obj.total_pagar, obj.inversion.moneda)
+        )
 
     ver_monto.short_description = "Monto a Pagar"
 
     def alerta_visual(self, obj): return obj.alerta_estado()
 
-    alerta_visual.short_description = "Alerta"
+    alerta_visual.short_description = "Estado"
 
 
 # ================================================
 # 4. GASTOS Y VENTAS
 # ================================================
 class GastoAdmin(admin.ModelAdmin):
-    # Agregamos 'estado'
     list_display = ('descripcion', 'proyecto', 'fecha_gasto', 'ver_monto', 'estado', 'tipo_gasto')
     list_filter = ('proyecto', 'moneda', 'estado', 'tipo_gasto')
     search_fields = ('descripcion', 'proveedor__razon_social')  # MANTENIDO
-
-    autocomplete_fields = ['proveedor', 'proyecto']  # Requiere search_fields en Proveedor y Proyecto
+    autocomplete_fields = ['proveedor', 'proyecto']
 
     @admin.display(description='Monto')
     def ver_monto(self, obj): return formato_dinero(obj.monto, obj.moneda)
@@ -197,19 +217,10 @@ class GastoAdmin(admin.ModelAdmin):
 class VentaAdmin(admin.ModelAdmin):
     list_display = ('cliente', 'departamento', 'fecha_venta', 'ver_precio', 'tipo_financiamiento')
     list_filter = ('fecha_venta', 'tipo_financiamiento')
-
-    # Requiere search_fields en Cliente y Departamento (ya están definidos arriba)
     autocomplete_fields = ['cliente', 'departamento']
-
     fields = (
-        'cliente',
-        'departamento',
-        'fecha_venta',
-        'moneda',
-        'descuento_porcentaje',
-        'precio_lista',
-        'monto',
-        'tipo_financiamiento',
+        'cliente', 'departamento', 'fecha_venta', 'moneda',
+        'descuento_porcentaje', 'precio_lista', 'monto', 'tipo_financiamiento',
     )
     readonly_fields = ('precio_lista', 'monto')
 
@@ -229,18 +240,24 @@ class ProveedorProyectoAdmin(admin.ModelAdmin):
 # 5. REGISTRO FINAL
 # ================================================
 
+# Inversiones y Agenda
 admin.site.register(Inversion, InversionAdmin)
-admin.site.register(CuotaInversion, CuotaInversionAdmin)
+admin.site.register(AgendaPagos, AgendaPagosAdmin)  # <--- AQUÍ REGISTRAMOS EL CALENDARIO
+# Nota: Ya no registramos 'CuotaInversion' para que no salga la lista fea.
+
+# Operaciones
 admin.site.register(Gasto, GastoAdmin)
 admin.site.register(Venta, VentaAdmin)
 admin.site.register(ProveedorProyecto, ProveedorProyectoAdmin)
 
+# Maestros
 admin.site.register(Proyecto, ProyectoAdmin)
 admin.site.register(Cliente, ClienteAdmin)
 admin.site.register(Departamento, DepartamentoAdmin)
 admin.site.register(Inversor, InversorAdmin)
 admin.site.register(Proveedor, ProveedorAdmin)
 
+# Otros
 admin.site.register(TipoDepartamento)
 admin.site.register(Documento)
 admin.site.register(ClienteProyecto)
