@@ -36,6 +36,7 @@ CSRF_TRUSTED_ORIGINS = ['https://*.railway.app']
 # Application definition
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -44,6 +45,18 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'core.apps.CoreConfig',
 ]
+
+JAZZMIN_SETTINGS = {
+    "site_title": "ERP Inmobiliaria",  # Título en la pestaña del navegador
+    "site_header": "Sistema de Gestión",  # Título en la barra de login
+    "site_brand": "Casa18 Admin",  # Título en el menú lateral
+    "welcome_sign": "Bienvenido al Panel de Control",
+    "copyright": "Casa18 S.A.C.",
+    "search_model": "core.Inversion",  # Barra de búsqueda global (busca inversores directo)
+
+    # Opciones de diseño
+    "show_ui_builder": False,  # Ponlo en True si quieres un botón para probar colores en vivo
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',

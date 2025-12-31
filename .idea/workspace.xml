@@ -4,10 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="f148048d-31b3-4b80-a001-c303b89e5660" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Casa18/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/Casa18/settings.py" afterDir="false" />
-    </list>
+    <list default="true" id="f148048d-31b3-4b80-a001-c303b89e5660" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -95,7 +92,7 @@
       <workItem from="1764903281779" duration="4612000" />
       <workItem from="1764934969873" duration="4805000" />
       <workItem from="1765503424161" duration="20080000" />
-      <workItem from="1765825561409" duration="20629000" />
+      <workItem from="1765825561409" duration="21269000" />
     </task>
     <servers />
   </component>
