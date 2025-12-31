@@ -2,6 +2,7 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
+from django.db.models import Max
 from datetime import date, timedelta
 from decimal import Decimal
 from .utils import obtener_feriados_peru
@@ -168,7 +169,8 @@ class Inversion(models.Model):
     def __str__(self): return f"Inv {self.id} - {self.inversor}"
 
     def generar_cronograma_pagos(self):
-        self.cuotas.all().delete()
+        ultima_pagada = self.cuotas.filter(estado='Pagado').aggregate(Max('nro_cuota'))['nro_cuota__max'] or 0
+        self.cuotas.filter(nro_cuota__gt=ultima_pagada).delete()
         tea_valor = float(self.tea_anual)
         tea_decimal = tea_valor / 100.0 if tea_valor >= 1.0 else tea_valor
         tasa_diaria = (1 + tea_decimal) ** (1 / 360) - 1
