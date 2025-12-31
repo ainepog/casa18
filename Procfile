@@ -1,0 +1,1 @@
+web: gunicorn Casa18.wsgi
