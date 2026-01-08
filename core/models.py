@@ -13,14 +13,14 @@ import math
 def obtener_siguiente_dia_habil(fecha):
     if not fecha:
         return date.today()
-    feriados_anio = obtener_feriados_peru(fecha.year)
+    feriados_actual = obtener_feriados_peru(fecha.year)
     if fecha.month == 12:
-        feriados_anio += obtener_feriados_peru(fecha.year + 1)
+        feriados_actual += obtener_feriados_peru(fecha.year + 1)
 
-    while fecha.weekday() >= 5 or fecha in feriados_anio:
+    while fecha.weekday() >= 5 or fecha in feriados_actual:
         fecha += timedelta(days=1)
-        if fecha.year != feriados_anio[0].year and fecha.month > 1:
-            feriados_anio = obtener_feriados_peru(fecha.year)
+        if fecha.year != feriados_actual[0].year and fecha.month > 1:
+            feriados_actual = obtener_feriados_peru(fecha.year)
     return fecha
 
 
@@ -50,8 +50,8 @@ OPCIONES_MONEDA = [
     ('USD', '$ (Dólares)'),
 ]
 TIPO_DOC_INVERSOR = [
-    ('DNI', 'DNI - Persona'),
-    ('RUC', 'RUC - Empresa')
+    ('DNI', 'DNI'),
+    ('RUC', 'RUC')
 ]
 
 
@@ -76,7 +76,7 @@ class Proyecto(models.Model):
         super().save(*args, **kwargs)
 
     def unidades_disponibles(self):
-        return self.departamento_set.filter(estado_disponibilidad='Disponible').count()
+        return Departamento.objects.filter(tipo__proyecto=self, estado_disponibilidad='Disponible').count()
 
     def __str__(self): return self.nombre
 
@@ -103,6 +103,7 @@ class Proveedor(models.Model):
     telefono = models.CharField(max_length=20, null=True, blank=True)
     correo = models.EmailField(null=True, blank=True)
 
+    class Meta: verbose_name_plural = "Proveedores"
     def __str__(self): return self.razon_social
 
 
