@@ -172,28 +172,36 @@ class Inversion(models.Model):
     def generar_cronograma_pagos(self):
         ultima_pagada = self.cuotas.filter(estado='Pagado').aggregate(Max('nro_cuota'))['nro_cuota__max'] or 0
         self.cuotas.filter(nro_cuota__gt=ultima_pagada).delete()
-        tea_valor = float(self.tea_anual)
-        tea_decimal = tea_valor / 100.0 if tea_valor >= 1.0 else tea_valor
-        tasa_diaria = (1 + tea_decimal) ** (1 / 360) - 1
-        dias_por_periodo = 90 if self.frecuencia == 'Trimestral' else 30
 
-        fecha_anterior = self.fecha_desembolso
-        num_cuotas = int(self.plazo_meses / (3 if dias_por_periodo == 90 else 1))
-        hoy = date.today()
+
+        if self.frecuencia == 'Trimestral':
+            frecuencia_anual = 4
+            meses_a_sumar = 3
+        else:  # Mensual
+            frecuencia_anual = 12
+            meses_a_sumar = 1
+
+
+        tasa_periodo_fija = (self.tea_anual / 100) / frecuencia_anual
+
+        monto_interes_fijo = self.capital_monto * tasa_periodo_fija
+
+        num_cuotas = int(self.plazo_meses / meses_a_sumar)
+        fecha_actual = self.fecha_desembolso
         cuotas_batch = []
+        hoy = date.today()
 
         for i in range(1, num_cuotas + 1):
-            fecha_tentativa = fecha_anterior + timedelta(days=dias_por_periodo)
-            fecha_final = obtener_siguiente_dia_habil(fecha_tentativa)
-            dias_reales = (fecha_final - fecha_anterior).days
+            fecha_programada = fecha_actual + timedelta(days=30 * meses_a_sumar)
+            fecha_final = obtener_siguiente_dia_habil(fecha_programada)
 
-            capital_float = float(self.capital_monto)
-            interes_bruto = capital_float * tasa_diaria * dias_reales
-            impuesto = interes_bruto * 0.05
-            neto = interes_bruto - impuesto
+            dias_reales = (fecha_final - fecha_actual).days
+
+            impuesto = monto_interes_fijo * Decimal('0.05')
+            neto = monto_interes_fijo - impuesto
 
             es_ultima = (i == num_cuotas)
-            amortizacion = capital_float if es_ultima else 0.0
+            amortizacion = self.capital_monto if es_ultima else Decimal('0.00')
             total = neto + amortizacion
             estado_ini = 'Pagado' if fecha_final < hoy else 'Pendiente'
 
@@ -201,17 +209,19 @@ class Inversion(models.Model):
                 inversion=self,
                 nro_cuota=i,
                 fecha_programada=fecha_final,
-                dias_periodo=dias_reales,
+                dias_periodo=dias_reales,  # Informativo
                 saldo_capital=self.capital_monto,
-                interes_bruto=Decimal(f"{interes_bruto:.2f}"),
-                monto_impuesto=Decimal(f"{impuesto:.2f}"),
-                interes_neto=Decimal(f"{neto:.2f}"),
-                amortizacion_capital=Decimal(f"{amortizacion:.2f}"),
-                total_pagar=Decimal(f"{total:.2f}"),
+
+                interes_bruto=monto_interes_fijo,
+                monto_impuesto=impuesto,
+                interes_neto=neto,
+                amortizacion_capital=amortizacion,
+                total_pagar=total,
                 es_ultima_cuota=es_ultima,
                 estado=estado_ini
             ))
-            fecha_anterior = fecha_final
+
+            fecha_actual = fecha_final
 
         CuotaInversion.objects.bulk_create(cuotas_batch)
         self.actualizar_estado_general()
@@ -240,7 +250,6 @@ class CuotaInversion(models.Model):
     comprobante = models.FileField(upload_to='comprobantes/', null=True, blank=True)
 
     def alerta_estado(self):
-        # PROTECCIÓN CRÍTICA: Si no hay fecha (ej: creación), retornar guion
         if not self.fecha_programada: return "—"
 
         if self.estado == 'Pagado': return "Pagado"
@@ -253,6 +262,9 @@ class CuotaInversion(models.Model):
 
     def __str__(self):
         return f"Cuota #{self.nro_cuota}"
+
+    class Meta: verbose_name_plural = "Cuotas"
+
 
 
 # ==========================================
