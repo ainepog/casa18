@@ -163,42 +163,76 @@ class Inversion(models.Model):
     tea_anual = models.DecimalField(max_digits=5, decimal_places=2)
     plazo_meses = models.IntegerField()
     frecuencia = models.CharField(max_length=20, choices=[('Mensual', 'Mensual'), ('Trimestral', 'Trimestral')])
+
+    TIPO_CALCULO_CHOICES = [
+        ('FINANCIERO', 'Financiero (Días exactos - Monto Variable)'),
+        ('COMERCIAL', 'Comercial (360 días - Monto Fijo)'),
+    ]
+    tipo_calculo = models.CharField(
+        max_length=20,
+        choices=TIPO_CALCULO_CHOICES,
+        default='FINANCIERO'
+    )
+    # ===========================================
+
     estado = models.CharField(max_length=20, default='Activo', editable=False)
 
-    class Meta: verbose_name_plural = "Inversiones"
+    class Meta:
+        verbose_name_plural = "Inversiones"
 
-    def __str__(self): return f"Inv {self.id} - {self.inversor}"
+    def __str__(self):
+        return f"Inv {self.id} - {self.inversor}"
 
     def generar_cronograma_pagos(self):
+        # 1. Limpieza
         ultima_pagada = self.cuotas.filter(estado='Pagado').aggregate(Max('nro_cuota'))['nro_cuota__max'] or 0
         self.cuotas.filter(nro_cuota__gt=ultima_pagada).delete()
 
-
+        # 2. Configuración General
         if self.frecuencia == 'Trimestral':
             frecuencia_anual = 4
             meses_a_sumar = 3
-        else:  # Mensual
+        else:
             frecuencia_anual = 12
             meses_a_sumar = 1
 
+        # 3. PREPARACIÓN DE TASAS (SEGÚN EL SELECTOR)
+        tasa_diaria_financiera = Decimal(0)
+        monto_interes_comercial = Decimal(0)
 
-        tasa_periodo_fija = (self.tea_anual / 100) / frecuencia_anual
+        if self.tipo_calculo == 'FINANCIERO':
+            # Fórmula Científica: (1 + TEA)^(1/360) - 1
+            tea_valor = float(self.tea_anual)
+            tea_decimal = tea_valor / 100.0
+            tasa_diaria_financiera = Decimal((1 + tea_decimal) ** (1 / 360) - 1)
+        else:
+            # Fórmula Simple: Tasa / Periodos
+            tasa_periodo = (self.tea_anual / 100) / frecuencia_anual
+            monto_interes_comercial = self.capital_monto * tasa_periodo
 
-        monto_interes_fijo = self.capital_monto * tasa_periodo_fija
-
+        # 4. Bucle
         num_cuotas = int(self.plazo_meses / meses_a_sumar)
         fecha_actual = self.fecha_desembolso
         cuotas_batch = []
         hoy = date.today()
 
         for i in range(1, num_cuotas + 1):
+            # A. Fechas
             fecha_programada = fecha_actual + timedelta(days=30 * meses_a_sumar)
             fecha_final = obtener_siguiente_dia_habil(fecha_programada)
-
             dias_reales = (fecha_final - fecha_actual).days
 
-            impuesto = monto_interes_fijo * Decimal('0.05')
-            neto = monto_interes_fijo - impuesto
+            # B. CÁLCULO DEL DINERO (EL SWITCH)
+            if self.tipo_calculo == 'FINANCIERO':
+                # Lógica Excel Valentín (Variable por días)
+                interes_bruto = self.capital_monto * tasa_diaria_financiera * dias_reales
+            else:
+                # Lógica Excel Anterior (Fijo siempre)
+                interes_bruto = monto_interes_comercial
+
+            # C. Impuestos y Netos
+            impuesto = interes_bruto * Decimal('0.05')
+            neto = interes_bruto - impuesto
 
             es_ultima = (i == num_cuotas)
             amortizacion = self.capital_monto if es_ultima else Decimal('0.00')
@@ -209,10 +243,11 @@ class Inversion(models.Model):
                 inversion=self,
                 nro_cuota=i,
                 fecha_programada=fecha_final,
-                dias_periodo=dias_reales,  # Informativo
+                dias_periodo=dias_reales,
                 saldo_capital=self.capital_monto,
 
-                interes_bruto=monto_interes_fijo,
+                # Usamos el valor calculado dinámicamente arriba
+                interes_bruto=interes_bruto,
                 monto_impuesto=impuesto,
                 interes_neto=neto,
                 amortizacion_capital=amortizacion,
@@ -249,6 +284,21 @@ class CuotaInversion(models.Model):
                               default='Pendiente')
     comprobante = models.FileField(upload_to='comprobantes/', null=True, blank=True)
 
+    def fecha_pago_texto(self):
+        if not self.fecha_programada:
+            return "-"
+
+        dias = {0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 4: 'Viernes', 5: 'Sábado', 6: 'Domingo'}
+        meses = {1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
+                 7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'}
+
+        f = self.fecha_programada
+        dia_nombre = dias[f.weekday()]
+        mes_nombre = meses[f.month]
+
+        return f"{dia_nombre}, {f.day} de {mes_nombre} de {f.year}"
+    fecha_pago_texto.short_description = "Fecha de Pago"
+
     def alerta_estado(self):
         if not self.fecha_programada: return "—"
 
@@ -265,7 +315,11 @@ class CuotaInversion(models.Model):
 
     class Meta: verbose_name_plural = "Cuotas"
 
-
+class AgendaPagos(CuotaInversion):
+    class Meta:
+        proxy = True
+        verbose_name = "Agenda de Pagos"
+        verbose_name_plural = "Agenda de Pagos"
 
 # ==========================================
 # MÓDULO VENTAS Y CLIENTES
@@ -379,9 +433,3 @@ def acciones_post_venta(sender, instance, created, **kwargs):
                 cambios = True
             if cambios:
                 proyecto.save()
-
-class AgendaPagos(CuotaInversion):
-    class Meta:
-        proxy = True
-        verbose_name = "Calendario de Pagos"
-        verbose_name_plural = "Calendario de Pagos"

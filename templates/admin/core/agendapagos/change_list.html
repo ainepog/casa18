@@ -1,0 +1,66 @@
+{% extends "admin/change_list.html" %}
+{% load humanize %}
+
+{% block result_list %}
+    {{ block.super }}
+
+    {% if totales_por_moneda %}
+    <div style="
+        margin-top: 15px;
+        padding: 15px 20px;
+        background-color: #f8f9fa;
+        border-top: 2px solid #ddd;
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 30px;
+    ">
+        <span style="font-size: 14px; text-transform: uppercase; color: #666; font-weight: bold;">
+            Total Mostrado:
+        </span>
+
+        {% if totales_por_moneda.USD %}
+        <div style="display: flex; flex-direction: column; align-items: flex-end;">
+            <span style="font-size: 12px; color: #666;">DÓLARES</span>
+            <span style="color: #28a745; font-size: 20px; font-weight: bold; font-family: monospace;">
+                $ {{ totales_por_moneda.USD|floatformat:2|intcomma }}
+            </span>
+        </div>
+        {% endif %}
+
+        {% if totales_por_moneda.USD and totales_por_moneda.PEN %}
+            <div style="height: 30px; width: 1px; background-color: #ccc;"></div>
+        {% endif %}
+
+        {% if totales_por_moneda.PEN %}
+        <div style="display: flex; flex-direction: column; align-items: flex-end;">
+            <span style="font-size: 12px; color: #666;">SOLES</span>
+            <span style="color: #28a745; font-size: 20px; font-weight: bold; font-family: monospace;">
+                S/ {{ totales_por_moneda.PEN|floatformat:2|intcomma }}
+            </span>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+{% endblock %}
+
+{% block extrahead %}
+    {{ block.super }}
+    <script type="text/javascript">
+        // Usamos una función autoejecutable pasando jQuery para evitar conflictos
+        (function($) {
+            $(document).ready(function() {
+                // Buscamos el formulario de búsqueda de Jazzmin (suele tener id "changelist-search")
+                // y buscamos todos los 'select' dentro de él.
+                var $filtros = $('#changelist-search select');
+
+                // Escuchamos el evento 'change'.
+                // En jQuery esto captura tanto cambios nativos como de librerías visuales.
+                $filtros.on('change', function() {
+                    // Encontramos el formulario padre y lo enviamos
+                    $(this).closest('form').submit();
+                });
+            });
+        })(django.jQuery || window.jQuery); // Probamos con el jQuery de Django o el global
+    </script>
+{% endblock %}
