@@ -5,8 +5,6 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="f148048d-31b3-4b80-a001-c303b89e5660" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.venv/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Casa18/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/Casa18/settings.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -111,6 +109,7 @@
       <workItem from="1767969365256" duration="7939000" />
       <workItem from="1770863333398" duration="2418000" />
       <workItem from="1770866613090" duration="9000" />
+      <workItem from="1771423243769" duration="430000" />
     </task>
     <servers />
   </component>
