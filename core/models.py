@@ -184,11 +184,6 @@ class Inversion(models.Model):
         return f"Inv {self.id} - {self.inversor}"
 
     def generar_cronograma_pagos(self):
-        # 1. Limpieza
-        ultima_pagada = self.cuotas.filter(estado='Pagado').aggregate(Max('nro_cuota'))['nro_cuota__max'] or 0
-        self.cuotas.filter(nro_cuota__gt=ultima_pagada).delete()
-
-        # 2. Configuración General
         if self.frecuencia == 'Trimestral':
             frecuencia_anual = 4
             meses_a_sumar = 3
@@ -196,69 +191,88 @@ class Inversion(models.Model):
             frecuencia_anual = 12
             meses_a_sumar = 1
 
-        # 3. PREPARACIÓN DE TASAS (SEGÚN EL SELECTOR)
         tasa_diaria_financiera = Decimal(0)
         monto_interes_comercial = Decimal(0)
 
         if self.tipo_calculo == 'FINANCIERO':
-            # Fórmula Científica: (1 + TEA)^(1/360) - 1
             tea_valor = float(self.tea_anual)
             tea_decimal = tea_valor / 100.0
             tasa_diaria_financiera = Decimal((1 + tea_decimal) ** (1 / 360) - 1)
         else:
-            # Fórmula Simple: Tasa / Periodos
             tasa_periodo = (self.tea_anual / 100) / frecuencia_anual
             monto_interes_comercial = self.capital_monto * tasa_periodo
 
-        # 4. Bucle
         num_cuotas = int(self.plazo_meses / meses_a_sumar)
         fecha_actual = self.fecha_desembolso
-        cuotas_batch = []
         hoy = date.today()
 
+        cuotas_existentes = {c.nro_cuota: c for c in self.cuotas.all()}
+        cuotas_a_crear = []
+        cuotas_a_actualizar = []
+
         for i in range(1, num_cuotas + 1):
-            # A. Fechas
             fecha_programada = fecha_actual + timedelta(days=30 * meses_a_sumar)
             fecha_final = obtener_siguiente_dia_habil(fecha_programada)
             dias_reales = (fecha_final - fecha_actual).days
 
-            # B. CÁLCULO DEL DINERO (EL SWITCH)
             if self.tipo_calculo == 'FINANCIERO':
-                # Lógica Excel Valentín (Variable por días)
                 interes_bruto = self.capital_monto * tasa_diaria_financiera * dias_reales
             else:
-                # Lógica Excel Anterior (Fijo siempre)
                 interes_bruto = monto_interes_comercial
 
-            # C. Impuestos y Netos
             impuesto = interes_bruto * Decimal('0.05')
             neto = interes_bruto - impuesto
 
             es_ultima = (i == num_cuotas)
             amortizacion = self.capital_monto if es_ultima else Decimal('0.00')
             total = neto + amortizacion
-            estado_ini = 'Pagado' if fecha_final < hoy else 'Pendiente'
 
-            cuotas_batch.append(CuotaInversion(
-                inversion=self,
-                nro_cuota=i,
-                fecha_programada=fecha_final,
-                dias_periodo=dias_reales,
-                saldo_capital=self.capital_monto,
+            cuota = cuotas_existentes.get(i)
 
-                # Usamos el valor calculado dinámicamente arriba
-                interes_bruto=interes_bruto,
-                monto_impuesto=impuesto,
-                interes_neto=neto,
-                amortizacion_capital=amortizacion,
-                total_pagar=total,
-                es_ultima_cuota=es_ultima,
-                estado=estado_ini
-            ))
+            if cuota:
+                cuota.fecha_programada = fecha_final
+                cuota.dias_periodo = dias_reales
+                cuota.saldo_capital = self.capital_monto
+                cuota.interes_bruto = interes_bruto
+                cuota.monto_impuesto = impuesto
+                cuota.interes_neto = neto
+                cuota.amortizacion_capital = amortizacion
+                cuota.total_pagar = total
+                cuota.es_ultima_cuota = es_ultima
+
+                cuotas_a_actualizar.append(cuota)
+            else:
+                estado_ini = 'Pagado' if fecha_final < hoy else 'Pendiente'
+                nueva_cuota = CuotaInversion(
+                    inversion=self,
+                    nro_cuota=i,
+                    fecha_programada=fecha_final,
+                    dias_periodo=dias_reales,
+                    saldo_capital=self.capital_monto,
+                    interes_bruto=interes_bruto,
+                    monto_impuesto=impuesto,
+                    interes_neto=neto,
+                    amortizacion_capital=amortizacion,
+                    total_pagar=total,
+                    es_ultima_cuota=es_ultima,
+                    estado=estado_ini
+                )
+                cuotas_a_crear.append(nueva_cuota)
 
             fecha_actual = fecha_final
 
-        CuotaInversion.objects.bulk_create(cuotas_batch)
+        if cuotas_a_actualizar:
+            CuotaInversion.objects.bulk_update(cuotas_a_actualizar, [
+                'fecha_programada', 'dias_periodo', 'saldo_capital', 'interes_bruto',
+                'monto_impuesto', 'interes_neto', 'amortizacion_capital', 'total_pagar',
+                'es_ultima_cuota'
+            ])
+
+        if cuotas_a_crear:
+            CuotaInversion.objects.bulk_create(cuotas_a_crear)
+
+        self.cuotas.filter(nro_cuota__gt=num_cuotas).delete()
+
         self.actualizar_estado_general()
 
     def actualizar_estado_general(self):
