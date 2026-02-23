@@ -5,16 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="f148048d-31b3-4b80-a001-c303b89e5660" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/static/js/banco_dinamico.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/static/js/equity_dinamico.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/static/js/formato_moneda.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/static/js/inversiones_manuales.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Casa18/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/Casa18/settings.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Casa18/urls.py" beforeDir="false" afterPath="$PROJECT_DIR$/Casa18/urls.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/core/admin.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/admin.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/core/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -120,7 +112,7 @@
       <workItem from="1770863333398" duration="2418000" />
       <workItem from="1770866613090" duration="9000" />
       <workItem from="1771423243769" duration="770000" />
-      <workItem from="1771711291108" duration="15911000" />
+      <workItem from="1771711291108" duration="16325000" />
     </task>
     <servers />
   </component>
