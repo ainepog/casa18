@@ -70,7 +70,6 @@ class Proyecto(models.Model):
     estado = models.CharField(max_length=50, choices=ESTADOS_PROYECTO, default='Planos')
     fecha_inicio = models.DateField()
     fecha_entrega = models.DateField(null=True, blank=True)
-
     total_unidades = models.IntegerField(default=0, validators=[MinValueValidator(0)])
     meta_ventas_banco = models.IntegerField(default=0, editable=False)
     banco_activado = models.BooleanField(default=False)
@@ -95,7 +94,6 @@ class Documento(models.Model):
         ('CONTRATO', 'Contrato / Documento Legal'),
         ('OTROS', 'Otros'),
     ]
-
     tipo = models.CharField(max_length=20, choices=TIPO_DOC_CHOICES)
     archivo = models.FileField(upload_to='casa18/documentos/%Y/%m/', null=True, blank=True)
     descripcion = models.CharField(max_length=255, blank=True, help_text="Ej: Voucher de transferencia - Cuota 1")
