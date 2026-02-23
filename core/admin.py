@@ -102,9 +102,9 @@ class ProyectoAdmin(admin.ModelAdmin):
         fields = ('nombre', 'area_m2', 'precio_base', 'plano_modelo')
 
     inlines = [TipoDepartamentoInline]
-    list_display = ('nombre', 'estado', 'ver_disponibles', 'total_unidades', 'banco_activado_check')
-    search_fields = ('nombre',)
-    list_filter = ('estado', 'banco_activado')
+    list_display = ('nombre', 'estado', 'tipo','ver_disponibles', 'total_unidades', 'banco_activado_check')
+    search_fields = ('nombre','tipo',)
+    list_filter = ('estado', 'banco_activado','tipo')
 
     def ver_disponibles(self, obj):
         return f"{obj.unidades_disponibles()} / {obj.total_unidades}"

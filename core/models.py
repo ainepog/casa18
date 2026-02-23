@@ -60,6 +60,11 @@ TIPO_DOC_INVERSOR = [
 # ==========================================
 
 class Proyecto(models.Model):
+    TIPO_PROYECTO = [
+            ('INMOBILIARIO', 'Proyecto Inmobiliario (Edificio)'),
+            ('OPERATIVO', 'Fondo Empresarial / Operativo'),
+    ]
+    tipo = models.CharField(max_length=20, choices=TIPO_PROYECTO, default='INMOBILIARIO')
     nombre = models.CharField(max_length=200)
     ubicacion = models.CharField(max_length=255)
     estado = models.CharField(max_length=50, choices=ESTADOS_PROYECTO, default='Planos')
@@ -78,7 +83,8 @@ class Proyecto(models.Model):
     def unidades_disponibles(self):
         return Departamento.objects.filter(tipo__proyecto=self, estado_disponibilidad='Disponible').count()
 
-    def __str__(self): return self.nombre
+    def __str__(self):
+        return f"{self.nombre} ({self.get_tipo_display()})"
 
 
 class Documento(models.Model):
