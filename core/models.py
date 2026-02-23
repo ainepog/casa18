@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.core.validators import MinValueValidator
 from django.db.models.signals import post_save, post_delete
@@ -61,29 +62,66 @@ TIPO_DOC_INVERSOR = [
 
 class Proyecto(models.Model):
     TIPO_PROYECTO = [
-            ('INMOBILIARIO', 'Proyecto Inmobiliario (Edificio)'),
-            ('OPERATIVO', 'Fondo Empresarial / Operativo'),
+        ('INMOBILIARIO', 'Edificio'),
+        ('EMPRESARIAL', 'Fondo Operativo'),
     ]
+
+    ESTADOS_PROYECTO = [
+        ('Planos', 'En Planos'),
+        ('En Construcción', 'En Construcción'),
+        ('En Preventa', 'En Preventa'),
+        ('Finalizado', 'Finalizado'),
+        ('Operativo', 'Operativo'),
+    ]
+
     tipo = models.CharField(max_length=20, choices=TIPO_PROYECTO, default='INMOBILIARIO')
     nombre = models.CharField(max_length=200)
-    ubicacion = models.CharField(max_length=255)
+    ubicacion = models.CharField(max_length=255, null=True, blank=True)
     estado = models.CharField(max_length=50, choices=ESTADOS_PROYECTO, default='Planos')
-    fecha_inicio = models.DateField()
+
+    fecha_inicio = models.DateField(null=True, blank=True)
     fecha_entrega = models.DateField(null=True, blank=True)
+
     total_unidades = models.IntegerField(default=0, validators=[MinValueValidator(0)])
     meta_ventas_banco = models.IntegerField(default=0, editable=False)
     banco_activado = models.BooleanField(default=False)
 
     def save(self, *args, **kwargs):
+        if self.tipo == 'EMPRESARIAL':
+            self.estado = 'Operativo'
+            self.total_unidades = 0
+            self.banco_activado = False
+            self.ubicacion = self.ubicacion or "Sede Central Casa18"
+
         if self.total_unidades > 0:
             self.meta_ventas_banco = math.ceil(self.total_unidades * 0.30)
+        else:
+            self.meta_ventas_banco = 0
+
         super().save(*args, **kwargs)
 
+    def clean(self):
+        super().clean()
+
+        if self.tipo == 'EMPRESARIAL' and Proyecto.objects.filter(tipo='EMPRESARIAL').exclude(id=self.id).exists():
+            raise ValidationError('Ya existe un Fondo Operativo registrado. Solo puede haber uno.')
+
+        if self.tipo == 'INMOBILIARIO':
+            errores = {}
+            if not self.fecha_inicio:
+                errores['fecha_inicio'] = "La fecha de inicio es obligatoria para edificios."
+            if self.estado == 'Operativo':
+                errores['estado'] = "El estado 'Operativo' es exclusivo para el Fondo Operativo."
+
+            if errores:
+                raise ValidationError(errores)
+
     def unidades_disponibles(self):
+        from .models import Departamento
         return Departamento.objects.filter(tipo__proyecto=self, estado_disponibilidad='Disponible').count()
 
     def __str__(self):
-        return f"{self.nombre} ({self.get_tipo_display()})"
+        return f"{self.nombre}"
 
 
 class Documento(models.Model):

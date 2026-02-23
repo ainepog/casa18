@@ -96,25 +96,47 @@ class ClienteAdmin(admin.ModelAdmin):
 
 @admin.register(Proyecto)
 class ProyectoAdmin(admin.ModelAdmin):
-    class TipoDepartamentoInline(admin.TabularInline):
-        model = TipoDepartamento
-        extra = 0
-        fields = ('nombre', 'area_m2', 'precio_base', 'plano_modelo')
+    search_fields = ['nombre']
 
-    inlines = [TipoDepartamentoInline]
-    list_display = ('nombre', 'estado', 'tipo','ver_disponibles', 'total_unidades', 'banco_activado_check')
-    search_fields = ('nombre','tipo',)
-    list_filter = ('estado', 'banco_activado','tipo')
+    list_display = ('nombre_resaltado', 'tipo', 'estado', 'unidades_info', 'banco_ok')
+    list_filter = ('tipo', 'estado')
 
-    def ver_disponibles(self, obj):
+    @admin.display(description='Nombre del Proyecto')
+    def nombre_resaltado(self, obj):
+        if obj.tipo == 'EMPRESARIAL':
+            return format_html('<strong style="color: #28a745;">{}</strong>', obj.nombre)
+        return obj.nombre
+
+    @admin.display(description='Und. Disp.')
+    def unidades_info(self, obj):
+        if obj.tipo == 'EMPRESARIAL':
+            return "-"
         return f"{obj.unidades_disponibles()} / {obj.total_unidades}"
 
-    ver_disponibles.short_description = "Und. Disp."
+    @admin.display(description='Banco OK', boolean=True)
+    def banco_ok(self, obj):
+        if obj.tipo == 'EMPRESARIAL':
+            return None
+        return obj.banco_activado
 
-    def banco_activado_check(self, obj):
-        return "SÍ" if obj.banco_activado else "NO"
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
 
-    banco_activado_check.short_description = "Banco OK"
+        if obj is None or obj.tipo == 'INMOBILIARIO':
+            if 'estado' in form.base_fields:
+                choices = [c for c in form.base_fields['estado'].choices if c[0] != 'Operativo']
+                form.base_fields['estado'].choices = choices
+        return form
+
+    def get_fieldsets(self, request, obj=None):
+        if obj and obj.tipo == 'EMPRESARIAL':
+            return (
+                ('Información del Fondo', {
+                    'fields': ('tipo', 'nombre', 'estado', 'ubicacion')
+                }),
+            )
+        return super().get_fieldsets(request, obj)
+
 
 class DocumentoInline(admin.TabularInline):
     model = Documento
