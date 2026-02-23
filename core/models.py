@@ -82,14 +82,29 @@ class Proyecto(models.Model):
 
 
 class Documento(models.Model):
-    proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE)
-    nombre = models.CharField(max_length=200)
-    tipo = models.CharField(max_length=100)
-    fecha_emision = models.DateField(null=True, blank=True)
-    archivo = models.FileField(upload_to='documentos_proyecto/', null=True, blank=True)
-    estado = models.CharField(max_length=50, default='Vigente')
+    TIPO_DOC_CHOICES = [
+        ('PLANO', 'Plano de Departamento'),
+        ('COMPROBANTE', 'Comprobante de Pago (Voucher)'),
+        ('RETENCION', 'Certificado de Retención'),
+        ('CONTRATO', 'Contrato / Documento Legal'),
+        ('OTROS', 'Otros'),
+    ]
 
-    def __str__(self): return self.nombre
+    tipo = models.CharField(max_length=20, choices=TIPO_DOC_CHOICES)
+    archivo = models.FileField(upload_to='casa18/documentos/%Y/%m/', null=True, blank=True)
+    descripcion = models.CharField(max_length=255, blank=True, help_text="Ej: Voucher de transferencia - Cuota 1")
+    fecha_subida = models.DateTimeField(auto_now_add=True, null=True)
+
+    departamento = models.ForeignKey('Departamento', on_delete=models.CASCADE, null=True, blank=True, related_name='documentos')
+    inversion = models.ForeignKey('Inversion', on_delete=models.CASCADE, null=True, blank=True, related_name='documentos')
+    prestamo = models.ForeignKey('PrestamoTercero', on_delete=models.CASCADE, null=True, blank=True, related_name='documentos')
+
+    class Meta:
+        verbose_name = "Archivo / Documento"
+        verbose_name_plural = "Archivos / Documentos"
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} - {self.descripcion or self.id}"
 
 
 # ==========================================
@@ -141,16 +156,42 @@ class Gasto(models.Model):
 # ==========================================
 
 class Inversor(models.Model):
+    BANCOS_CHOICES = [
+        ('BCP', 'Banco de Crédito del Perú (BCP)'),
+        ('BBVA', 'BBVA Continental'),
+        ('INTERBANK', 'Interbank'),
+        ('SCOTIABANK', 'Scotiabank'),
+        ('BANBIF', 'BanBif'),
+        ('PICHINCHA', 'Banco Pichincha'),
+        ('NACION', 'Banco de la Nación'),
+        ('CAJA_AREQUIPA', 'Caja Arequipa'),
+        ('OTRO', 'Otro...'),
+    ]
     nombre_completo = models.CharField(max_length=200)
     tipo_documento = models.CharField(max_length=10, choices=TIPO_DOC_INVERSOR, default='DNI')
     nro_doc = models.CharField(max_length=20, unique=True)
     direccion = models.CharField(max_length=255, null=True, blank=True)
     correo = models.EmailField(null=True, blank=True)
     telefono = models.CharField(max_length=20, null=True, blank=True)
+    banco = models.CharField(max_length=50, choices=BANCOS_CHOICES, blank=True, null=True, verbose_name='Banco de Abono')
+    cuenta_abono = models.CharField(max_length=50, blank=True, null=True, verbose_name='Número de Cuenta')
+    cci = models.CharField(max_length=50, blank=True, null=True, verbose_name='Código de Cuenta Interbancario (CCI)')
+
+    banco_personalizado = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name='Especificar Otro Banco')
 
     class Meta: verbose_name_plural = "Inversores"
 
     def __str__(self): return self.nombre_completo
+
+    @property
+    def nombre_banco_real(self):
+        if self.banco == 'OTRO':
+            return self.banco_personalizado or 'No especificado'
+        return self.get_banco_display()
 
 
 class Inversion(models.Model):
@@ -164,9 +205,31 @@ class Inversion(models.Model):
     plazo_meses = models.IntegerField()
     frecuencia = models.CharField(max_length=20, choices=[('Mensual', 'Mensual'), ('Trimestral', 'Trimestral')])
 
+    RESPONSABLE_CHOICES = [
+        ('PROYECTO', 'Proyecto'),
+        ('CASA18', 'Casa 18 (Gasto corporativo)'),
+        ('COMPARTIDO', 'Compartido (Múltiples destinos)'),
+    ]
+
+    responsable_pago = models.CharField(
+        max_length=20,
+        choices=RESPONSABLE_CHOICES,
+        default='PROYECTO',
+        verbose_name='Responsable de los Intereses'
+    )
+
+    destino_fondos = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name='Destino de los Fondos / Descripción',
+        help_text='Ej: $80k para Casa Porta, $20k para remodelación de oficinas Casa 18.'
+    )
+
     TIPO_CALCULO_CHOICES = [
         ('FINANCIERO', 'Financiero (Días exactos - Monto Variable)'),
         ('COMERCIAL', 'Comercial (360 días - Monto Fijo)'),
+        ('MANUAL', 'Manual (Personalizado)'),
+        ('EQUITY', 'Socio / Capital a Riesgo (Equity)'),
     ]
     tipo_calculo = models.CharField(
         max_length=20,
@@ -193,6 +256,32 @@ class Inversion(models.Model):
 
         tasa_diaria_financiera = Decimal(0)
         monto_interes_comercial = Decimal(0)
+
+        if self.tipo_calculo == 'MANUAL':
+            return
+
+        # ====================================================
+        # BLOQUE CORREGIDO PARA EQUITY (Socios Capitalistas)
+        # ====================================================
+        if self.tipo_calculo == 'EQUITY':
+            self.cuotas.all().delete()
+
+            if self.proyecto and self.proyecto.fecha_entrega:
+                fecha_fin = self.proyecto.fecha_entrega
+            else:
+                fecha_fin = self.fecha_desembolso  # Fallback
+
+            self.cuotas.create(
+                nro_cuota=1,
+                fecha_programada=fecha_fin,
+                interes_bruto=0,
+                monto_impuesto=0,
+                interes_neto=0,
+                amortizacion_capital=self.capital_monto,
+                total_pagar=self.capital_monto,
+                estado='Pendiente'
+            )
+            return
 
         if self.tipo_calculo == 'FINANCIERO':
             tea_valor = float(self.tea_anual)
@@ -243,7 +332,8 @@ class Inversion(models.Model):
                 cuotas_a_actualizar.append(cuota)
             else:
                 estado_ini = 'Pagado' if fecha_final < hoy else 'Pendiente'
-                nueva_cuota = CuotaInversion(
+                # Aquí usamos self.cuotas.model en lugar de CuotaInversion directo
+                nueva_cuota = self.cuotas.model(
                     inversion=self,
                     nro_cuota=i,
                     fecha_programada=fecha_final,
@@ -262,14 +352,14 @@ class Inversion(models.Model):
             fecha_actual = fecha_final
 
         if cuotas_a_actualizar:
-            CuotaInversion.objects.bulk_update(cuotas_a_actualizar, [
+            self.cuotas.model.objects.bulk_update(cuotas_a_actualizar, [
                 'fecha_programada', 'dias_periodo', 'saldo_capital', 'interes_bruto',
                 'monto_impuesto', 'interes_neto', 'amortizacion_capital', 'total_pagar',
                 'es_ultima_cuota'
             ])
 
         if cuotas_a_crear:
-            CuotaInversion.objects.bulk_create(cuotas_a_crear)
+            self.cuotas.model.objects.bulk_create(cuotas_a_crear)
 
         self.cuotas.filter(nro_cuota__gt=num_cuotas).delete()
 
@@ -361,18 +451,34 @@ class Departamento(models.Model):
     def __str__(self): return f"Dpto {self.nro} - {self.tipo.nombre}"
 
 
+# =====================================================================
+# 1. DIRECTORIO CENTRAL DE CLIENTES (Única Fuente de Verdad)
+# =====================================================================
 class Cliente(models.Model):
-    nombre = models.CharField(max_length=200)
-    correo = models.EmailField(unique=True)
-    telefono = models.CharField(max_length=20)
+    TIPO_DOC_CHOICES = [('DNI', 'DNI'), ('CE', 'CE'), ('RUC', 'RUC'), ('PASAPORTE', 'Pasaporte')]
 
-    def __str__(self): return self.nombre
+    nombre = models.CharField(max_length=200, verbose_name="Nombre / Razón Social")
+    tipo_documento = models.CharField(max_length=20, choices=TIPO_DOC_CHOICES, default='DNI')
+    nro_documento = models.CharField(max_length=20, unique=True, verbose_name="Nro. Documento")
+    correo = models.EmailField(blank=True, null=True)
+    telefono = models.CharField(max_length=20, blank=True, null=True)
+    direccion = models.CharField(max_length=255, blank=True, null=True)
+
+    es_prospecto_inmobiliario = models.BooleanField(default=True, verbose_name="Es Lead/Prospecto")
+    es_prestatario = models.BooleanField(default=False, verbose_name="Es Prestatario (Préstamos)")
+
+    def __str__(self):
+        return f"{self.nombre} ({self.nro_documento})"
 
 
+# =====================================================================
+# 2. MÓDULO INMOBILIARIO (Ventas y Leads)
+# =====================================================================
 class ClienteProyecto(models.Model):
-    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
-    proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, related_name='intereses_proyectos')
+    proyecto = models.ForeignKey('Proyecto', on_delete=models.CASCADE)  # Asumo que 'Proyecto' está definido arriba
     fecha_interes = models.DateField(auto_now_add=True)
+
     estado_interes = models.CharField(max_length=50, choices=ESTADOS_INTERES, default='Seguimiento')
     observaciones = models.TextField(blank=True)
 
@@ -380,15 +486,17 @@ class ClienteProyecto(models.Model):
         verbose_name = "Interés / Lead"
         verbose_name_plural = "Intereses / Leads"
 
-    def __str__(self): return f"{self.cliente} en {self.proyecto}"
+    def __str__(self):
+        return f"{self.cliente.nombre} en {self.proyecto}"
 
 
 class Venta(models.Model):
-    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT)
-    departamento = models.OneToOneField(Departamento, on_delete=models.PROTECT)
+    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name='compras_inmobiliarias')
+    departamento = models.OneToOneField('Departamento', on_delete=models.PROTECT)  # Asumo 'Departamento' existe
     fecha_venta = models.DateField()
 
-    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA, default='PEN')
+    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA,
+                              default='PEN')  # Asegúrate de tener OPCIONES_MONEDA
     precio_lista = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
     descuento_porcentaje = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     monto = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
@@ -405,6 +513,164 @@ class Venta(models.Model):
         self.departamento.estado_disponibilidad = 'Vendido'
         self.departamento.save()
         super().save(*args, **kwargs)
+
+
+# =====================================================================
+# MÓDULO DE PRÉSTAMOS A TERCEROS (CASA18 PRESTA DINERO)
+# =====================================================================
+
+class PrestamoTercero(models.Model):
+    cliente = models.ForeignKey('Cliente', on_delete=models.PROTECT, related_name='prestamos_recibidos')
+    motivo_prestamo = models.CharField(max_length=255, verbose_name='Motivo / Concepto',
+                                       help_text='Ej: Préstamo personal, compra de auto')
+
+    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA, default='PEN')
+    capital_monto = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Monto Prestado')
+    fecha_desembolso = models.DateField(verbose_name='Fecha de entrega del dinero')
+
+    tea_anual = models.DecimalField(max_digits=5, decimal_places=2, verbose_name='TEA (%)')
+    plazo_meses = models.IntegerField(verbose_name='Plazo (Meses)')
+    frecuencia = models.CharField(max_length=20, choices=[('Mensual', 'Mensual'), ('Trimestral', 'Trimestral')],
+                                  default='Mensual')
+
+    TIPO_CALCULO_CHOICES = [
+        ('FINANCIERO', 'Financiero (Días exactos)'),
+        ('COMERCIAL', 'Comercial (360 días)'),
+        ('MANUAL', 'Manual (Personalizado)'),
+    ]
+    tipo_calculo = models.CharField(max_length=20, choices=TIPO_CALCULO_CHOICES, default='FINANCIERO')
+    estado = models.CharField(max_length=20, default='Activo', editable=False)
+
+    class Meta:
+        verbose_name = "Préstamo a Tercero"
+        verbose_name_plural = "Préstamos a Terceros"
+
+    def __str__(self):
+        return f"Préstamo {self.id} - {self.cliente}"
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        if self.tipo_calculo in ['FINANCIERO', 'COMERCIAL']:
+            self.generar_cronograma_cobros()
+
+    def generar_cronograma_cobros(self):
+        from decimal import Decimal
+        from datetime import date, timedelta
+
+        if self.tipo_calculo == 'MANUAL':
+            return
+
+        frecuencia_anual = 4 if self.frecuencia == 'Trimestral' else 12
+        meses_a_sumar = 3 if self.frecuencia == 'Trimestral' else 1
+
+        tasa_diaria_financiera = Decimal(0)
+        monto_interes_comercial = Decimal(0)
+
+        if self.tipo_calculo == 'FINANCIERO':
+            tea_decimal = float(self.tea_anual) / 100.0
+            tasa_diaria_financiera = Decimal((1 + tea_decimal) ** (1 / 360) - 1)
+        else:
+            tasa_periodo = (self.tea_anual / 100) / frecuencia_anual
+            monto_interes_comercial = self.capital_monto * tasa_periodo
+
+        num_cuotas = int(self.plazo_meses / meses_a_sumar)
+        fecha_actual = self.fecha_desembolso
+        hoy = date.today()
+
+        cuotas_existentes = {c.nro_cuota: c for c in self.cuotas.all()}
+        cuotas_a_crear = []
+        cuotas_a_actualizar = []
+
+        for i in range(1, num_cuotas + 1):
+            fecha_programada = fecha_actual + timedelta(days=30 * meses_a_sumar)
+            fecha_final = obtener_siguiente_dia_habil(fecha_programada)
+            dias_reales = (fecha_final - fecha_actual).days
+
+            if self.tipo_calculo == 'FINANCIERO':
+                interes = self.capital_monto * tasa_diaria_financiera * dias_reales
+            else:
+                interes = monto_interes_comercial
+
+            es_ultima = (i == num_cuotas)
+            amortizacion = self.capital_monto if es_ultima else Decimal('0.00')
+            total = interes + amortizacion
+
+            cuota = cuotas_existentes.get(i)
+            if cuota:
+                cuota.fecha_programada = fecha_final
+                cuota.dias_periodo = dias_reales
+                cuota.saldo_capital = self.capital_monto
+                cuota.interes = interes
+                cuota.amortizacion_capital = amortizacion
+                cuota.total_pagar = total
+                cuota.es_ultima_cuota = es_ultima
+                cuotas_a_actualizar.append(cuota)
+            else:
+                nueva_cuota = self.cuotas.model(
+                    prestamo=self,
+                    nro_cuota=i,
+                    fecha_programada=fecha_final,
+                    dias_periodo=dias_reales,
+                    saldo_capital=self.capital_monto,
+                    interes=interes,
+                    amortizacion_capital=amortizacion,
+                    total_pagar=total,
+                    es_ultima_cuota=es_ultima,
+                    estado='Pagado' if fecha_final < hoy else 'Pendiente'
+                )
+                cuotas_a_crear.append(nueva_cuota)
+
+            fecha_actual = fecha_final
+
+        if cuotas_a_actualizar:
+            self.cuotas.model.objects.bulk_update(cuotas_a_actualizar, [
+                'fecha_programada', 'dias_periodo', 'saldo_capital', 'interes',
+                'amortizacion_capital', 'total_pagar', 'es_ultima_cuota'
+            ])
+        if cuotas_a_crear:
+            self.cuotas.model.objects.bulk_create(cuotas_a_crear)
+
+        self.cuotas.filter(nro_cuota__gt=num_cuotas).delete()
+        self.actualizar_estado_general()
+
+    def actualizar_estado_general(self):
+        hay_pendientes = self.cuotas.filter(estado__in=['Pendiente', 'Vencido']).exists()
+        nuevo_estado = 'Activo' if hay_pendientes else 'Finalizado'
+        PrestamoTercero.objects.filter(id=self.id).update(estado=nuevo_estado)
+
+
+class CuotaPrestamoTercero(models.Model):
+    prestamo = models.ForeignKey(PrestamoTercero, related_name='cuotas', on_delete=models.CASCADE)
+    nro_cuota = models.IntegerField()
+    fecha_programada = models.DateField()
+    dias_periodo = models.IntegerField(default=30)
+    saldo_capital = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    interes = models.DecimalField(max_digits=10, decimal_places=2)
+    amortizacion_capital = models.DecimalField(max_digits=12, decimal_places=2)
+    total_pagar = models.DecimalField(max_digits=12, decimal_places=2)
+
+    es_ultima_cuota = models.BooleanField(default=False)
+    estado = models.CharField(max_length=20,
+                              choices=[('Pendiente', 'Pendiente'), ('Pagado', 'Pagado'), ('Vencido', 'Vencido')],
+                              default='Pendiente')
+
+    class Meta:
+        ordering = ['nro_cuota']
+        verbose_name = "Cuota de Cobro"
+        verbose_name_plural = "Cuotas de Cobro"
+
+    def __str__(self):
+        return f"Cuota {self.nro_cuota} - {self.prestamo}"
+
+    def save(self, *args, **kwargs):
+        from datetime import date
+        hoy = date.today()
+        if self.fecha_programada and self.fecha_programada < hoy and self.estado == 'Pendiente':
+            self.estado = 'Vencido'
+        super().save(*args, **kwargs)
+
 
 
 # --- SIGNALS ---

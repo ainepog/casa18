@@ -12,7 +12,8 @@ from django.contrib.admin import DateFieldListFilter
 from .models import (
     Proyecto, Documento, Proveedor, Gasto, ProveedorProyecto,
     Inversor, Inversion, CuotaInversion, AgendaPagos,
-    TipoDepartamento, Departamento, Cliente, Venta, ClienteProyecto
+    TipoDepartamento, Departamento, Cliente, Venta, ClienteProyecto,
+    PrestamoTercero, CuotaPrestamoTercero
 )
 
 def formato_dinero(monto, moneda):
@@ -77,7 +78,7 @@ class FiltroCobrosFuturos(admin.SimpleListFilter):
 @admin.register(Cliente)
 class ClienteAdmin(admin.ModelAdmin):
     list_display = ('nombre', 'correo', 'telefono', 'ver_proyectos_interes')
-    search_fields = ('nombre', 'correo', 'telefono')
+    search_fields = ('nombre', 'correo', 'nro_documento')
 
     class InteresInline(admin.TabularInline):
         model = ClienteProyecto
@@ -115,12 +116,17 @@ class ProyectoAdmin(admin.ModelAdmin):
 
     banco_activado_check.short_description = "Banco OK"
 
+class DocumentoInline(admin.TabularInline):
+    model = Documento
+    extra = 1  # Te muestra un espacio vacío listo para subir un archivo
+    fields = ('tipo', 'archivo', 'descripcion')
 
 @admin.register(Departamento)
 class DepartamentoAdmin(admin.ModelAdmin):
     list_display = ('nro', 'obtener_proyecto', 'tipo', 'ver_area', 'ver_precio', 'estado_disponibilidad')
     list_filter = ('estado_disponibilidad', 'tipo__proyecto')
     search_fields = ('nro',)
+    inlines = [DocumentoInline]
 
     def obtener_proyecto(self, obj):
         return obj.tipo.proyecto.nombre
@@ -137,13 +143,28 @@ class DepartamentoAdmin(admin.ModelAdmin):
 
     ver_area.short_description = "Área"
 
-
 @admin.register(Inversor)
 class InversorAdmin(admin.ModelAdmin):
-    list_display = ('nombre_completo', 'tipo_documento', 'nro_doc', 'telefono')
-    list_filter = ('tipo_documento',)
-    search_fields = ('nombre_completo', 'nro_doc')
+    # Usamos nuestra nueva función para mostrar el nombre correcto en la tabla
+    list_display = ('nombre_completo', 'tipo_documento', 'nro_doc', 'telefono', 'ver_banco_real', 'cuenta_abono')
+    list_filter = ('tipo_documento', 'banco')
+    search_fields = ('nombre_completo', 'nro_doc', 'cuenta_abono')
+    fieldsets = (
+        ('Datos Personales', {
+            'fields': ('nombre_completo', 'tipo_documento', 'nro_doc', 'telefono', 'correo')
+        }),
+        ('Datos Bancarios y Tributarios', {
+            # Agregamos banco_personalizado justo debajo de banco
+            'fields': ('banco', 'banco_personalizado', 'cuenta_abono', 'cci')
+        }),
+    )
 
+    @admin.display(description='Banco')
+    def ver_banco_real(self, obj):
+        return obj.nombre_banco_real
+
+    class Media:
+        js = ('js/banco_dinamico.js',)
 
 @admin.register(Proveedor)
 class ProveedorAdmin(admin.ModelAdmin):
@@ -153,35 +174,34 @@ class ProveedorAdmin(admin.ModelAdmin):
 
 # Registros simples
 admin.site.register(Documento)
-admin.site.register(TipoDepartamento)
 admin.site.register(ClienteProyecto)
-
+admin.site.register(TipoDepartamento)
 
 # ================================================
-# 2. INVERSIONES (Gestión del Contrato)
+# 2. INVERSIONES
 # ================================================
-
 class CuotaInversionInline(admin.TabularInline):
     model = CuotaInversion
     extra = 0
     can_delete = False
-    fields = ('nro_cuota', 'ver_bruto', 'ver_impuesto', 'ver_neto',
-              'ver_amortizacion', 'ver_total', 'fecha_programada', 'alerta_estado')
-    readonly_fields = fields
 
-    def ver_bruto(self, obj): return formato_dinero(obj.interes_bruto, obj.inversion.moneda)
+    def ver_bruto(self, obj):
+        return formato_dinero(obj.interes_bruto, obj.inversion.moneda)
 
     ver_bruto.short_description = "Int. Bruto"
 
-    def ver_impuesto(self, obj): return formato_dinero(obj.monto_impuesto, obj.inversion.moneda)
+    def ver_impuesto(self, obj):
+        return formato_dinero(obj.monto_impuesto, obj.inversion.moneda)
 
     ver_impuesto.short_description = "Impuesto"
 
-    def ver_neto(self, obj): return formato_dinero(obj.interes_neto, obj.inversion.moneda)
+    def ver_neto(self, obj):
+        return formato_dinero(obj.interes_neto, obj.inversion.moneda)
 
     ver_neto.short_description = "Int. Neto"
 
-    def ver_amortizacion(self, obj): return formato_dinero(obj.amortizacion_capital, obj.inversion.moneda)
+    def ver_amortizacion(self, obj):
+        return formato_dinero(obj.amortizacion_capital, obj.inversion.moneda)
 
     ver_amortizacion.short_description = "Amortización"
 
@@ -190,29 +210,149 @@ class CuotaInversionInline(admin.TabularInline):
 
     ver_total.short_description = "A Pagar"
 
+    # ---> NUEVA COLUMNA EXCLUSIVA PARA SOCIOS <---
+    def ver_capital_invertido(self, obj):
+        return format_html("<b>{}</b>", formato_dinero(obj.amortizacion_capital, obj.inversion.moneda))
+
+    ver_capital_invertido.short_description = "Capital Invertido"
+
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
-        if db_field.name == 'alerta_estado':
-            formfield.widget = forms.TextInput(attrs={
+        if db_field.name in ['interes_bruto', 'monto_impuesto', 'interes_neto', 'amortizacion_capital', 'total_pagar']:
+            formfield.widget.attrs.update({'style': 'width: 100px;'})
+        if db_field.name == 'nro_cuota':
+            formfield.widget.attrs.update({
                 'readonly': 'readonly',
-                'style': 'border:none; background:none; font-weight:bold; font-size:1.1em;'
+                'style': 'width: 50px; background: #eee; border: none; text-align: center; font-weight: bold;'
             })
         return formfield
+
+    # ==========================================
+    # MAGIA DINÁMICA: CAMBIA SEGÚN EL TIPO
+    # ==========================================
+
+    def get_fields(self, request, obj=None):
+        if obj and obj.tipo_calculo == 'MANUAL':
+            return ('nro_cuota', 'fecha_programada', 'interes_bruto', 'monto_impuesto',
+                    'interes_neto', 'amortizacion_capital', 'total_pagar', 'estado')
+
+        elif obj and obj.tipo_calculo == 'EQUITY':
+            # ---> MODO EQUITY: Tabla minimalista solo con el capital inicial <---
+            return ('nro_cuota', 'ver_capital_invertido', 'fecha_programada', 'estado')
+
+        else:
+            # MODO FINANCIERO / COMERCIAL: Todas las columnas completas
+            return ('nro_cuota', 'ver_bruto', 'ver_impuesto', 'ver_neto',
+                    'ver_amortizacion', 'ver_total', 'fecha_programada', 'estado')
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.tipo_calculo == 'MANUAL':
+            return ()
+        else:
+            return self.get_fields(request, obj)
+
+    def get_extra(self, request, obj=None, **kwargs):
+        return 1 if (obj and obj.tipo_calculo == 'MANUAL') else 0
+
+    def has_add_permission(self, request, obj=None):
+        return True if (obj and obj.tipo_calculo == 'MANUAL') else False
+
+    def has_delete_permission(self, request, obj=None):
+        return True if (obj and obj.tipo_calculo == 'MANUAL') else False
+
+    class Media:
+        js = ('js/inversiones_manuales.js',)
+
+
+class InversionForm(forms.ModelForm):
+    class Meta:
+        model = Inversion
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Solo relajamos estos 3, la fecha de desembolso vuelve a ser obligatoria normal
+        self.fields['tea_anual'].required = False
+        self.fields['plazo_meses'].required = False
+        self.fields['frecuencia'].required = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        tipo_calculo = cleaned_data.get('tipo_calculo')
+
+        if tipo_calculo == 'EQUITY':
+            # Rellenamos solo los financieros
+            cleaned_data['tea_anual'] = 0
+            cleaned_data['plazo_meses'] = 0
+            cleaned_data['frecuencia'] = 'Mensual'
+
+            # Limpiamos los errores de estos 3
+            self._errors.pop('tea_anual', None)
+            self._errors.pop('plazo_meses', None)
+            self._errors.pop('frecuencia', None)
+
+        else:
+            # Si NO es EQUITY, exigimos los financieros
+            if cleaned_data.get('tea_anual') is None:
+                self.add_error('tea_anual', 'Este campo es obligatorio.')
+            if cleaned_data.get('plazo_meses') is None:
+                self.add_error('plazo_meses', 'Este campo es obligatorio.')
+            if not cleaned_data.get('frecuencia'):
+                self.add_error('frecuencia', 'Este campo es obligatorio.')
+
+        return cleaned_data
 
 
 @admin.register(Inversion)
 class InversionAdmin(admin.ModelAdmin):
-    inlines = [CuotaInversionInline]
-    list_display = ('id', 'inversor', 'proyecto', 'ver_capital', 'fecha_desembolso', 'estado')
-    list_filter = ('proyecto', 'estado', 'moneda', 'frecuencia')
+    form = InversionForm
+
+    inlines = [CuotaInversionInline, DocumentoInline]
+
+    list_display = ('id', 'inversor', 'proyecto', 'ver_capital', 'responsable_pago', 'fecha_desembolso', 'estado')
+    list_filter = ('proyecto', 'responsable_pago', 'estado', 'moneda', 'frecuencia')
     search_fields = ('inversor__nombre_completo', 'id')
     autocomplete_fields = ['inversor', 'proyecto']
     save_on_top = True
 
-    @admin.display(description='Capital', ordering='capital_monto')
+    readonly_fields = ('estado',)
+
+    @admin.display(description='Inversión', ordering='capital_monto')
     def ver_capital(self, obj):
         return formato_dinero(obj.capital_monto, obj.moneda)
 
+    fieldsets = (
+        ('Datos del Contrato', {
+            'fields': ('inversor', 'proyecto', 'estado')
+        }),
+        ('Condiciones Financieras', {
+            'fields': (
+            'capital_monto', 'moneda', 'tea_anual', 'plazo_meses', 'frecuencia', 'tipo_calculo', 'fecha_desembolso')
+        }),
+        ('Distribución y Responsabilidad', {
+            'fields': ('responsable_pago', 'destino_fondos'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    change_list_template = 'admin/core/agendapagos/change_list.html'
+
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        if isinstance(response, TemplateResponse) and hasattr(response, 'context_data'):
+            try:
+                cl = response.context_data.get('cl')
+                if cl:
+                    qs = cl.queryset
+                    resumen = qs.order_by().values('moneda').annotate(total=Sum('capital_monto'))
+                    totales = {item['moneda']: item['total'] for item in resumen}
+                    response.context_data['totales_por_moneda'] = totales
+            except (AttributeError, KeyError):
+                pass
+        return response
+
+    class Media:
+        js = ('js/equity_dinamico.js',)
 
 # ================================================
 # 3. AGENDA DE PAGOS
@@ -327,6 +467,153 @@ class ProveedorProyectoAdmin(admin.ModelAdmin):
 
     @admin.display(description='Monto Contrato')
     def ver_monto(self, obj): return formato_dinero(obj.monto_estimado, obj.moneda)
+
+
+# =====================================================================
+# MÓDULO DE PRÉSTAMOS A TERCEROS (PANEL VISUAL)
+# =====================================================================
+class CuotaPrestamoTerceroInline(admin.TabularInline):
+    model = CuotaPrestamoTercero
+    extra = 0
+    can_delete = False
+    def ver_interes(self, obj):
+        return formato_dinero(obj.interes, obj.prestamo.moneda)
+
+    ver_interes.short_description = "Interés"
+
+    def ver_amortizacion(self, obj):
+        return formato_dinero(obj.amortizacion_capital, obj.prestamo.moneda)
+
+    ver_amortizacion.short_description = "Amortización"
+
+    def ver_total(self, obj):
+        return format_html("<b>{}</b>", formato_dinero(obj.total_pagar, obj.prestamo.moneda))
+
+    ver_total.short_description = "A Pagar"
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
+        if db_field.name in ['interes', 'amortizacion_capital', 'total_pagar']:
+            formfield.widget.attrs.update({'style': 'width: 100px;'})
+        if db_field.name == 'nro_cuota':
+            formfield.widget.attrs.update({
+                'readonly': 'readonly',
+                'style': 'width: 50px; background: #eee; border: none; text-align: center; font-weight: bold;'
+            })
+        return formfield
+
+    def get_fields(self, request, obj=None):
+        if obj and obj.tipo_calculo == 'MANUAL':
+            return ('nro_cuota', 'fecha_programada', 'interes',
+                    'amortizacion_capital', 'total_pagar', 'estado')
+        else:
+            return ('nro_cuota', 'ver_interes', 'ver_amortizacion',
+                    'ver_total', 'fecha_programada', 'estado')
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.tipo_calculo == 'MANUAL':
+            return ()
+        else:
+            return self.get_fields(request, obj)
+
+    def get_extra(self, request, obj=None, **kwargs):
+        return 1 if (obj and obj.tipo_calculo == 'MANUAL') else 0
+
+    def has_add_permission(self, request, obj=None):
+        return True if (obj and obj.tipo_calculo == 'MANUAL') else False
+
+    def has_delete_permission(self, request, obj=None):
+        return True if (obj and obj.tipo_calculo == 'MANUAL') else False
+
+    # ¡Reutilizamos el script nuclear! Funcionará perfecto aquí también.
+    class Media:
+        js = ('js/inversiones_manuales.js',)
+
+class PrestamoTerceroForm(forms.ModelForm):
+    class Meta:
+        model = PrestamoTercero
+        fields = '__all__'
+
+    inlines = [CuotaPrestamoTerceroInline, DocumentoInline]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Relajamos los campos para que el modo Manual no se queje si los dejas vacíos
+        self.fields['tea_anual'].required = False
+        self.fields['plazo_meses'].required = False
+        self.fields['frecuencia'].required = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        tipo_calculo = cleaned_data.get('tipo_calculo')
+
+        if tipo_calculo in ['FINANCIERO', 'COMERCIAL']:
+            if cleaned_data.get('tea_anual') is None:
+                self.add_error('tea_anual', 'Obligatorio para cálculos automáticos.')
+            if cleaned_data.get('plazo_meses') is None:
+                self.add_error('plazo_meses', 'Obligatorio para cálculos automáticos.')
+            if not cleaned_data.get('frecuencia'):
+                self.add_error('frecuencia', 'Obligatorio para cálculos automáticos.')
+        else:
+            # Si es MANUAL, autocompletamos con 0 para la base de datos
+            cleaned_data['tea_anual'] = cleaned_data.get('tea_anual') or 0
+            cleaned_data['plazo_meses'] = cleaned_data.get('plazo_meses') or 0
+            cleaned_data['frecuencia'] = cleaned_data.get('frecuencia') or 'Mensual'
+
+            self._errors.pop('tea_anual', None)
+            self._errors.pop('plazo_meses', None)
+            self._errors.pop('frecuencia', None)
+
+        return cleaned_data
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if 'cliente' in form.base_fields:
+            form.base_fields['cliente'].widget.can_add_related = False
+            form.base_fields['cliente'].widget.can_change_related = False
+            form.base_fields['cliente'].widget.can_delete_related = False
+        return form
+
+@admin.register(PrestamoTercero)
+class PrestamoTerceroAdmin(admin.ModelAdmin):
+    form = PrestamoTerceroForm
+    inlines = [CuotaPrestamoTerceroInline]
+
+    list_display = ('id', 'cliente', 'motivo_prestamo', 'ver_capital', 'fecha_desembolso', 'estado')
+    list_filter = ('estado', 'moneda', 'frecuencia', 'tipo_calculo')
+    search_fields = ('cliente__nombre', 'cliente__nro_documento', 'motivo_prestamo')
+    autocomplete_fields = ['cliente']
+    save_on_top = True
+    readonly_fields = ('estado',)
+
+    @admin.display(description='Monto Prestado', ordering='capital_monto')
+    def ver_capital(self, obj):
+        return formato_dinero(obj.capital_monto, obj.moneda)
+
+    fieldsets = (
+        ('Datos del Prestatario', {
+            'fields': ('cliente', 'motivo_prestamo', 'estado')
+        }),
+        ('Condiciones del Préstamo', {
+            'fields': (
+            'capital_monto', 'moneda', 'tea_anual', 'plazo_meses', 'frecuencia', 'tipo_calculo', 'fecha_desembolso')
+        }),
+    )
+
+    # Calculamos los totales en la lista principal (Igual que en Inversiones)
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        if isinstance(response, TemplateResponse) and hasattr(response, 'context_data'):
+            try:
+                cl = response.context_data.get('cl')
+                if cl:
+                    qs = cl.queryset
+                    resumen = qs.order_by().values('moneda').annotate(total=Sum('capital_monto'))
+                    totales = {item['moneda']: item['total'] for item in resumen}
+                    response.context_data['totales_por_moneda'] = totales
+            except (AttributeError, KeyError):
+                pass
+        return response
 
 
 # CONFIGURACIÓN FINAL

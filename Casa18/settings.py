@@ -53,9 +53,8 @@ JAZZMIN_SETTINGS = {
     "site_brand": "Casa18 Admin",  # Título en el menú lateral
     "welcome_sign": "Bienvenido al Panel de Control",
     "copyright": "Casa18 S.A.C.",
-    "search_model": "core.Inversion",  # Barra de búsqueda global (busca inversores directo)
-
-    # Opciones de diseño
+    "search_model": "core.Inversion",
+    "custom_js": "js/formato_moneda.js",
     "show_ui_builder": False,  # Ponlo en True si quieres un botón para probar colores en vivo
 }
 
@@ -120,6 +119,8 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
@@ -140,3 +141,7 @@ STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),
+]
