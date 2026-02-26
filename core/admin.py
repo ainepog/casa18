@@ -2,6 +2,7 @@ from datetime import date, timedelta
 import calendar
 from django.contrib import admin
 from django import forms
+from django.core.checks import messages
 from django.template.response import TemplateResponse
 from django.utils.html import format_html
 from django.db.models import Sum
@@ -12,7 +13,7 @@ from django.contrib.admin import DateFieldListFilter
 from .models import (
     Proyecto, Documento, Proveedor, Gasto, ProveedorProyecto,
     Inversor, Inversion, CuotaInversion, AgendaPagos,
-    TipoDepartamento, Departamento, Cliente, Venta, ClienteProyecto,
+    UnidadInmobiliaria, Cliente, Venta, ClienteProyecto,
     PrestamoTercero, CuotaPrestamoTercero
 )
 
@@ -97,8 +98,14 @@ class ClienteAdmin(admin.ModelAdmin):
 @admin.register(Proyecto)
 class ProyectoAdmin(admin.ModelAdmin):
     search_fields = ['nombre']
-
-    list_display = ('nombre_resaltado', 'tipo', 'estado', 'unidades_info', 'banco_ok')
+    list_display = (
+        'nombre_resaltado',
+        'estado',
+        'unidades_info',
+        'ver_area_vendida',
+        'ver_recaudacion',
+        'ver_promedio_m2'
+    )
     list_filter = ('tipo', 'estado')
 
     @admin.display(description='Nombre del Proyecto')
@@ -112,6 +119,29 @@ class ProyectoAdmin(admin.ModelAdmin):
         if obj.tipo == 'EMPRESARIAL':
             return "-"
         return f"{obj.unidades_disponibles()} / {obj.total_unidades}"
+
+    @admin.display(description='Área Vendida')
+    def ver_area_vendida(self, obj):
+        if obj.tipo == 'EMPRESARIAL':
+            return "-"
+        return f"{obj.area_vendida_total()} m²"
+
+    @admin.display(description='Precio Prom. / m²')
+    def ver_promedio_m2(self, obj):
+        if obj.tipo == 'EMPRESARIAL':
+            return "-"
+
+        promedio = obj.precio_promedio_m2()
+        if promedio > 0:
+            # Muestra algo como "$ 1,500.00 / m²"
+            return f"$ {promedio:,.2f} / m²"
+        return "Sin ventas"
+
+    @admin.display(description='Total Recaudado')
+    def ver_recaudacion(self, obj):
+        if obj.tipo == 'EMPRESARIAL':
+            return "-"
+        return f"$ {obj.total_recaudado():,.2f}"
 
     @admin.display(description='Banco OK', boolean=True)
     def banco_ok(self, obj):
@@ -143,27 +173,83 @@ class DocumentoInline(admin.TabularInline):
     extra = 1  # Te muestra un espacio vacío listo para subir un archivo
     fields = ('tipo', 'archivo', 'descripcion')
 
-@admin.register(Departamento)
-class DepartamentoAdmin(admin.ModelAdmin):
-    list_display = ('nro', 'obtener_proyecto', 'tipo', 'ver_area', 'ver_precio', 'estado_disponibilidad')
-    list_filter = ('estado_disponibilidad', 'tipo__proyecto')
-    search_fields = ('nro',)
-    inlines = [DocumentoInline]
 
-    def obtener_proyecto(self, obj):
-        return obj.tipo.proyecto.nombre
+class UnidadInmobiliariaForm(forms.ModelForm):
+    generar_en_lote = forms.BooleanField(
+        required=False,
+        label='Generar en Lote',
+        help_text='Marca esta casilla si quieres crear varias cocheras o depósitos de golpe.'
+    )
+    numero_inicial = forms.IntegerField(
+        required=False,
+        initial=1,
+        label='Número Inicial',
+        help_text='Desde qué número empezamos (Ej: 1)'
+    )
+    cantidad = forms.IntegerField(
+        required=False,
+        initial=10,
+        label='Cantidad a generar',
+        help_text='¿Cuántas unidades se crearán?'
+    )
 
-    obtener_proyecto.short_description = "Proyecto"
+    class Meta:
+        model = UnidadInmobiliaria
+        fields = '__all__'
+        help_texts = {
+            'numero': "Si vas a generar en lote, escribe aquí solo el PREFIJO (Ej: 'Sótano 1 - Cochera '). Si es solo una unidad, pon su número normal (Ej: '101')."
+        }
 
-    def ver_precio(self, obj):
-        return f"{obj.tipo.precio_base:,.2f}"
 
-    ver_precio.short_description = "Precio Base"
+@admin.register(UnidadInmobiliaria)
+class UnidadInmobiliariaAdmin(admin.ModelAdmin):
+    form = UnidadInmobiliariaForm
 
-    def ver_area(self, obj):
-        return f"{obj.tipo.area_m2} m²"
+    list_display = ('numero', 'tipo', 'proyecto', 'precio_venta', 'estado_disponibilidad')
+    list_filter = ('proyecto', 'tipo', 'estado_disponibilidad')
+    search_fields = ('numero', 'proyecto__nombre')
 
-    ver_area.short_description = "Área"
+    fieldsets = (
+        ('Información Base', {
+            'fields': ('proyecto', 'tipo', 'numero', 'precio_venta', 'area_m2', 'estado_disponibilidad')
+        }),
+        ('Creación en bloque (Opcional)', {
+            'fields': ('generar_en_lote', 'numero_inicial', 'cantidad'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def save_model(self, request, obj, form, change):
+        if not change and form.cleaned_data.get('generar_en_lote'):
+            cantidad = form.cleaned_data.get('cantidad') or 1
+            inicio = form.cleaned_data.get('numero_inicial') or 1
+            prefijo = obj.numero
+
+            obj.numero = f"{prefijo}{inicio}"
+            super().save_model(request, obj, form, change)
+
+            unidades_extra = []
+            for i in range(1, cantidad):
+                num_actual = inicio + i
+                nombre_final = f"{prefijo}{num_actual}"
+
+                if not UnidadInmobiliaria.objects.filter(proyecto=obj.proyecto, numero=nombre_final).exists():
+                    unidades_extra.append(
+                        UnidadInmobiliaria(
+                            proyecto=obj.proyecto,
+                            tipo=obj.tipo,
+                            numero=nombre_final,
+                            precio_venta=obj.precio_venta,
+                            area_m2=obj.area_m2,
+                            estado_disponibilidad=obj.estado_disponibilidad
+                        )
+                    )
+
+            if unidades_extra:
+                UnidadInmobiliaria.objects.bulk_create(unidades_extra)
+                messages.success(request, f"Se generaron {len(unidades_extra) + 1} unidades en total.")
+        else:
+            super().save_model(request, obj, form, change)
 
 @admin.register(Inversor)
 class InversorAdmin(admin.ModelAdmin):
@@ -197,7 +283,6 @@ class ProveedorAdmin(admin.ModelAdmin):
 # Registros simples
 admin.site.register(Documento)
 admin.site.register(ClienteProyecto)
-admin.site.register(TipoDepartamento)
 
 # ================================================
 # 2. INVERSIONES
@@ -469,11 +554,13 @@ class GastoAdmin(admin.ModelAdmin):
 
 @admin.register(Venta)
 class VentaAdmin(admin.ModelAdmin):
-    list_display = ('cliente', 'departamento', 'fecha_venta', 'ver_precio', 'tipo_financiamiento')
+    list_display = ('cliente', 'unidad', 'fecha_venta', 'ver_precio', 'tipo_financiamiento')
     list_filter = ('fecha_venta', 'tipo_financiamiento')
-    autocomplete_fields = ['cliente', 'departamento']
+
+    autocomplete_fields = ['cliente', 'unidad']
+
     fields = (
-        'cliente', 'departamento', 'fecha_venta', 'moneda',
+        'cliente', 'unidad', 'fecha_venta', 'moneda',
         'descuento_porcentaje', 'precio_lista', 'monto', 'tipo_financiamiento',
     )
     readonly_fields = ('precio_lista', 'monto')

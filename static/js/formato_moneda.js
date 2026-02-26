@@ -1,6 +1,6 @@
 (function($) {
     $(document).ready(function() {
-        const palabrasClave = ['monto', 'precio', 'capital', 'interes', 'amortizacion', 'total'];
+        const palabrasClave = ['monto', 'precio', 'capital', 'interes', 'amortizacion', 'total','ingreso','area'];
 
         function aplicarFormato(input) {
             const name = (input.name || '').toLowerCase();

@@ -3,7 +3,7 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from django.db.models import Max
+from django.db.models import Max, Sum
 from datetime import date, timedelta
 from decimal import Decimal
 from .utils import obtener_feriados_peru
@@ -85,6 +85,23 @@ class Proyecto(models.Model):
     total_unidades = models.IntegerField(default=0, validators=[MinValueValidator(0)])
     meta_ventas_banco = models.IntegerField(default=0, editable=False)
     banco_activado = models.BooleanField(default=False)
+    area_vendible_total = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        verbose_name="Área Construida Total (m²)"
+    )
+    ingreso_proyectado = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name="Ingreso Proyectado"
+    )
+
+    def precio_promedio_esperado(self):
+        if self.area_vendible_total > 0:
+            return self.ingreso_proyectado / self.area_vendible_total
+        return
 
     def save(self, *args, **kwargs):
         if self.tipo == 'EMPRESARIAL':
@@ -92,6 +109,8 @@ class Proyecto(models.Model):
             self.total_unidades = 0
             self.banco_activado = False
             self.ubicacion = self.ubicacion or "Sede Central Casa18"
+            self.area_vendible_total = 0
+            self.ingreso_proyectado = 0
 
         if self.total_unidades > 0:
             self.meta_ventas_banco = math.ceil(self.total_unidades * 0.30)
@@ -117,8 +136,24 @@ class Proyecto(models.Model):
                 raise ValidationError(errores)
 
     def unidades_disponibles(self):
-        from .models import Departamento
-        return Departamento.objects.filter(tipo__proyecto=self, estado_disponibilidad='Disponible').count()
+        return UnidadInmobiliaria.objects.filter(
+            proyecto=self,
+            estado_disponibilidad='Disponible',
+            tipo='DEPARTAMENTO'
+        ).count()
+
+    def area_vendida_total(self):
+        total_area = UnidadInmobiliaria.objects.filter(
+            proyecto=self,
+            estado_disponibilidad='Vendido'
+        ).aggregate(total=Sum('area_m2'))['total']
+        return total_area or 0
+
+    def total_recaudado(self):
+        total_dinero = Venta.objects.filter(
+            unidad__proyecto=self
+        ).aggregate(total=Sum('monto'))['total']
+        return total_dinero or 0
 
     def __str__(self):
         return f"{self.nombre}"
@@ -137,7 +172,8 @@ class Documento(models.Model):
     descripcion = models.CharField(max_length=255, blank=True, help_text="Ej: Voucher de transferencia - Cuota 1")
     fecha_subida = models.DateTimeField(auto_now_add=True, null=True)
 
-    departamento = models.ForeignKey('Departamento', on_delete=models.CASCADE, null=True, blank=True, related_name='documentos')
+    unidad = models.ForeignKey('UnidadInmobiliaria', on_delete=models.CASCADE, null=True, blank=True,
+                               related_name='documentos')
     inversion = models.ForeignKey('Inversion', on_delete=models.CASCADE, null=True, blank=True, related_name='documentos')
     prestamo = models.ForeignKey('PrestamoTercero', on_delete=models.CASCADE, null=True, blank=True, related_name='documentos')
 
@@ -467,30 +503,40 @@ class AgendaPagos(CuotaInversion):
         verbose_name = "Agenda de Pagos"
         verbose_name_plural = "Agenda de Pagos"
 
+
 # ==========================================
-# MÓDULO VENTAS Y CLIENTES
+# MÓDULO VENTAS Y CLIENTES (INVENTARIO)
 # ==========================================
 
-class TipoDepartamento(models.Model):
-    proyecto = models.ForeignKey(Proyecto, on_delete=models.CASCADE)
-    nombre = models.CharField(max_length=100)
-    area_m2 = models.DecimalField(max_digits=6, decimal_places=2, default=0)
-    precio_base = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    descripcion = models.TextField(blank=True, null=True)
-    plano_modelo = models.FileField(upload_to='planos/', null=True, blank=True)
+class UnidadInmobiliaria(models.Model):
+    TIPO_UNIDAD = [
+        ('DEPARTAMENTO', 'Departamento'),
+        ('COCHERA', 'Cochera'),
+        ('DEPOSITO', 'Depósito'),
+    ]
 
-    def __str__(self): return f"{self.nombre} ({self.area_m2} m²)"
+    ESTADO_DISPONIBILIDAD = [
+        ('Disponible', 'Disponible'),
+        ('Separado', 'Separado'),
+        ('Vendido', 'Vendido'),
+    ]
 
+    proyecto = models.ForeignKey('Proyecto', on_delete=models.CASCADE, related_name='unidades')
+    tipo = models.CharField(max_length=20, choices=TIPO_UNIDAD, default='DEPARTAMENTO')
 
-class Departamento(models.Model):
-    tipo = models.ForeignKey(TipoDepartamento, on_delete=models.CASCADE)
-    nro = models.CharField(max_length=20)
-    piso = models.IntegerField(default=1)
+    numero = models.CharField(max_length=50, verbose_name="Número o Identificador")
+
+    precio_venta = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    area_m2 = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, verbose_name="Área (m2)")
     estado_disponibilidad = models.CharField(max_length=20, choices=ESTADO_DISPONIBILIDAD, default='Disponible')
 
-    class Meta: unique_together = ('tipo', 'nro')
+    class Meta:
+        verbose_name = "Unidad Inmobiliaria"
+        verbose_name_plural = "Unidades Inmobiliarias"
+        unique_together = ('proyecto', 'numero')  # Evita crear dos "101" en el mismo proyecto
 
-    def __str__(self): return f"Dpto {self.nro} - {self.tipo.nombre}"
+    def __str__(self):
+        return f"{self.get_tipo_display()} {self.numero} - {self.proyecto.nombre}"
 
 
 # =====================================================================
@@ -534,11 +580,10 @@ class ClienteProyecto(models.Model):
 
 class Venta(models.Model):
     cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name='compras_inmobiliarias')
-    departamento = models.OneToOneField('Departamento', on_delete=models.PROTECT)  # Asumo 'Departamento' existe
+    unidad = models.OneToOneField('UnidadInmobiliaria', on_delete=models.PROTECT)
     fecha_venta = models.DateField()
 
-    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA,
-                              default='PEN')  # Asegúrate de tener OPCIONES_MONEDA
+    moneda = models.CharField(max_length=3, choices=OPCIONES_MONEDA, default='PEN')
     precio_lista = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
     descuento_porcentaje = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     monto = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
@@ -548,12 +593,13 @@ class Venta(models.Model):
     porcentaje_financiado = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
 
     def save(self, *args, **kwargs):
-        self.precio_lista = self.departamento.tipo.precio_base
+        from decimal import Decimal
+        self.precio_lista = self.unidad.precio_venta or Decimal('0.00')
         dinero_descontado = self.precio_lista * (self.descuento_porcentaje / Decimal(100))
         self.monto = self.precio_lista - dinero_descontado
 
-        self.departamento.estado_disponibilidad = 'Vendido'
-        self.departamento.save()
+        self.unidad.estado_disponibilidad = 'Vendido'
+        self.unidad.save()
         super().save(*args, **kwargs)
 
 
@@ -736,22 +782,29 @@ def acciones_post_venta(sender, instance, created, **kwargs):
     if created:
         cp, _ = ClienteProyecto.objects.get_or_create(
             cliente=instance.cliente,
-            proyecto=instance.departamento.tipo.proyecto
+            proyecto=instance.unidad.proyecto
         )
         cp.estado_interes = 'Comprado'
-        cp.observaciones += f"\n Compró el Dpto {instance.departamento.nro}."
+        cp.observaciones += f"\n Compró el {instance.unidad.get_tipo_display()} {instance.unidad.numero}."
         cp.save()
 
-        proyecto = instance.departamento.tipo.proyecto
-        ventas = Venta.objects.filter(departamento__tipo__proyecto=proyecto).count()
+        proyecto = instance.unidad.proyecto
+
+        ventas_depas = Venta.objects.filter(
+            unidad__proyecto=proyecto,
+            unidad__tipo='DEPARTAMENTO'
+        ).count()
 
         cambios = False
-        if ventas >= proyecto.meta_ventas_banco:
+
+        if ventas_depas >= proyecto.meta_ventas_banco:
             if not proyecto.banco_activado:
                 proyecto.banco_activado = True
                 cambios = True
-            if proyecto.estado in ['Planos', 'Preventa']:
-                proyecto.estado = 'Construccion'
+
+            if proyecto.estado in ['Planos', 'En Preventa']:
+                proyecto.estado = 'En Construcción'
                 cambios = True
-            if cambios:
-                proyecto.save()
+
+        if cambios:
+            proyecto.save()
