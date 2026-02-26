@@ -223,7 +223,7 @@ class Gasto(models.Model):
 
     fecha_gasto = models.DateField()
     nro_comprobante = models.CharField(max_length=50, null=True, blank=True)
-    comprobante = models.FileField(upload_to='gasto_comprobantes/', null=True, blank=True)
+    comprobante = models.FileField(upload_to='casa18/gastos/%Y/%m/', null=True, blank=True)
     estado = models.CharField(max_length=20, choices=ESTADO_PAGO, default='Pagado')
 
     def __str__(self): return f"{self.descripcion}"
@@ -464,8 +464,7 @@ class CuotaInversion(models.Model):
     es_ultima_cuota = models.BooleanField(default=False)
     estado = models.CharField(max_length=20, choices=[('Pendiente', 'Pendiente'), ('Pagado', 'Pagado')],
                               default='Pendiente')
-    comprobante = models.FileField(upload_to='comprobantes/', null=True, blank=True)
-
+    comprobante = models.FileField(upload_to='casa18/inversiones/cuotas/%Y/%m/', null=True, blank=True)
     def fecha_pago_texto(self):
         if not self.fecha_programada:
             return "-"

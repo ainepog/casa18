@@ -292,39 +292,49 @@ class CuotaInversionInline(admin.TabularInline):
     extra = 0
     can_delete = False
 
+
+    fields = (
+        'nro_cuota', 'fecha_programada',
+        'ver_bruto', 'ver_impuesto', 'ver_neto', 'ver_amortizacion', 'ver_total',
+        'estado', 'fecha_pago_real', 'comprobante'
+    )
+
+
+    readonly_fields = (
+        'nro_cuota', 'fecha_programada',
+        'ver_bruto', 'ver_impuesto', 'ver_neto', 'ver_amortizacion', 'ver_total',
+        'ver_capital_invertido'
+    )
+
     def ver_bruto(self, obj):
         return formato_dinero(obj.interes_bruto, obj.inversion.moneda)
-
     ver_bruto.short_description = "Int. Bruto"
 
     def ver_impuesto(self, obj):
         return formato_dinero(obj.monto_impuesto, obj.inversion.moneda)
-
     ver_impuesto.short_description = "Impuesto"
 
     def ver_neto(self, obj):
         return formato_dinero(obj.interes_neto, obj.inversion.moneda)
-
     ver_neto.short_description = "Int. Neto"
 
     def ver_amortizacion(self, obj):
         return formato_dinero(obj.amortizacion_capital, obj.inversion.moneda)
-
     ver_amortizacion.short_description = "Amortización"
 
     def ver_total(self, obj):
+        from django.utils.html import format_html # Por si acaso falta el import
         return format_html("<b>{}</b>", formato_dinero(obj.total_pagar, obj.inversion.moneda))
-
     ver_total.short_description = "A Pagar"
 
-    # ---> NUEVA COLUMNA EXCLUSIVA PARA SOCIOS <---
     def ver_capital_invertido(self, obj):
+        from django.utils.html import format_html
         return format_html("<b>{}</b>", formato_dinero(obj.amortizacion_capital, obj.inversion.moneda))
-
     ver_capital_invertido.short_description = "Capital Invertido"
 
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
+        # (Aunque como ahora la mayoría son readonly, esto solo aplicará si dejas alguno editable)
         if db_field.name in ['interes_bruto', 'monto_impuesto', 'interes_neto', 'amortizacion_capital', 'total_pagar']:
             formfield.widget.attrs.update({'style': 'width: 100px;'})
         if db_field.name == 'nro_cuota':
@@ -334,9 +344,6 @@ class CuotaInversionInline(admin.TabularInline):
             })
         return formfield
 
-    # ==========================================
-    # MAGIA DINÁMICA: CAMBIA SEGÚN EL TIPO
-    # ==========================================
 
     def get_fields(self, request, obj=None):
         if obj and obj.tipo_calculo == 'MANUAL':
@@ -344,11 +351,9 @@ class CuotaInversionInline(admin.TabularInline):
                     'interes_neto', 'amortizacion_capital', 'total_pagar', 'estado')
 
         elif obj and obj.tipo_calculo == 'EQUITY':
-            # ---> MODO EQUITY: Tabla minimalista solo con el capital inicial <---
             return ('nro_cuota', 'ver_capital_invertido', 'fecha_programada', 'estado')
 
         else:
-            # MODO FINANCIERO / COMERCIAL: Todas las columnas completas
             return ('nro_cuota', 'ver_bruto', 'ver_impuesto', 'ver_neto',
                     'ver_amortizacion', 'ver_total', 'fecha_programada', 'estado')
 
@@ -467,13 +472,19 @@ class InversionAdmin(admin.ModelAdmin):
 
 @admin.register(AgendaPagos)
 class AgendaPagosAdmin(admin.ModelAdmin):
-    list_display = ('ver_proyecto', 'ver_inversor', 'nro_cuota', 'ver_monto', 'ver_fecha', 'ver_dias_restantes')
+    list_display = (
+        'ver_proyecto', 'ver_inversor', 'nro_cuota', 'ver_monto',
+        'ver_fecha', 'ver_dias_restantes', 'estado', 'fecha_pago_real'
+    )
+
+    list_editable = ('estado', 'fecha_pago_real')
 
     def get_queryset(self, request):
         return super().get_queryset(request).filter(estado='Pendiente')
 
     list_filter = (
         FiltroCobrosFuturos,
+        'estado',
         'inversion__proyecto',
         'inversion__moneda'
     )
@@ -482,7 +493,12 @@ class AgendaPagosAdmin(admin.ModelAdmin):
     ordering = ('fecha_programada',)
     list_per_page = 20
 
-    # Columnas
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
     def ver_proyecto(self, obj):
         return obj.inversion.proyecto.nombre
 
@@ -498,6 +514,7 @@ class AgendaPagosAdmin(admin.ModelAdmin):
     def ver_monto(self, obj):
         simbolo = 'S/' if obj.inversion.moneda == 'PEN' else '$'
         monto_str = f"{simbolo} {obj.total_pagar:,.2f}"
+        from django.utils.html import format_html
         return format_html("<span style='color:green; font-weight:bold'>{}</span>", monto_str)
 
     ver_monto.short_description = "Monto a Pagar"
@@ -513,10 +530,13 @@ class AgendaPagosAdmin(admin.ModelAdmin):
 
     ver_dias_restantes.short_description = "Días Restantes"
 
-    # LÓGICA DE TOTALES Y REDIRECCIÓN
     change_list_template = 'admin/core/agendapagos/change_list.html'
 
     def changelist_view(self, request, extra_context=None):
+        from django.http import HttpResponseRedirect
+        from django.template.response import TemplateResponse
+        from django.db.models import Sum
+
         # 1. Filtro automático (Default)
         if not request.GET and request.path == request.get_full_path():
             return HttpResponseRedirect(request.path + "?vencimiento=este_mes")
@@ -528,14 +548,12 @@ class AgendaPagosAdmin(admin.ModelAdmin):
                 cl = response.context_data.get('cl')
                 if cl:
                     qs = cl.queryset
-                    # USAMOS .order_by() PARA QUE LA SUMA SEA CORRECTA
                     resumen = qs.order_by().values('inversion__moneda').annotate(total=Sum('total_pagar'))
                     totales = {item['inversion__moneda']: item['total'] for item in resumen}
                     response.context_data['totales_por_moneda'] = totales
             except (AttributeError, KeyError):
                 pass
         return response
-
 
 # ================================================
 # 4. GASTOS Y VENTAS
@@ -723,6 +741,8 @@ class PrestamoTerceroAdmin(admin.ModelAdmin):
             except (AttributeError, KeyError):
                 pass
         return response
+
+
 
 
 # CONFIGURACIÓN FINAL
