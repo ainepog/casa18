@@ -114,7 +114,8 @@
       <workItem from="1770866613090" duration="9000" />
       <workItem from="1771423243769" duration="770000" />
       <workItem from="1771711291108" duration="21230000" />
-      <workItem from="1771944093260" duration="9567000" />
+      <workItem from="1771944093260" duration="11729000" />
+      <workItem from="1772685227558" duration="1775000" />
     </task>
     <servers />
   </component>
@@ -142,7 +143,7 @@
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/core/models.py</url>
-          <line>254</line>
+          <line>263</line>
           <option name="timeStamp" value="2" />
         </line-breakpoint>
       </breakpoints>

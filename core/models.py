@@ -155,6 +155,15 @@ class Proyecto(models.Model):
         ).aggregate(total=Sum('monto'))['total']
         return total_dinero or 0
 
+    def precio_promedio_m2(self):
+        area_total = self.area_vendida_total()
+        recaudado = self.total_recaudado()
+
+        # Evitamos el error de división por cero
+        if area_total and area_total > 0:
+            return recaudado / area_total
+        return 0
+
     def __str__(self):
         return f"{self.nombre}"
 
@@ -293,7 +302,7 @@ class Inversion(models.Model):
         max_length=20,
         choices=RESPONSABLE_CHOICES,
         default='PROYECTO',
-        verbose_name='Responsable de los Intereses'
+        verbose_name='responsable'
     )
 
     destino_fondos = models.TextField(
@@ -539,7 +548,7 @@ class UnidadInmobiliaria(models.Model):
 
 
 # =====================================================================
-# 1. DIRECTORIO CENTRAL DE CLIENTES (Única Fuente de Verdad)
+# 1. DIRECTORIO CENTRAL DE CLIENTES
 # =====================================================================
 class Cliente(models.Model):
     TIPO_DOC_CHOICES = [('DNI', 'DNI'), ('CE', 'CE'), ('RUC', 'RUC'), ('PASAPORTE', 'Pasaporte')]

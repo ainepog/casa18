@@ -76,10 +76,54 @@ class FiltroCobrosFuturos(admin.SimpleListFilter):
 # 1. MODELOS BASE
 # ================================================
 
+class RolClienteFilter(admin.SimpleListFilter):
+    title = 'Rol del Cliente'
+    parameter_name = 'rol'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('lead', 'Leads (Inmobiliaria)'),
+            ('prestatario', 'Prestatarios'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == 'lead':
+            return queryset.filter(es_prospecto_inmobiliario=True)
+        if self.value() == 'prestatario':
+            return queryset.filter(es_prestatario=True)
+        if self.value() == 'ambos':
+            return queryset.filter(es_prospecto_inmobiliario=True, es_prestatario=True)
+        return queryset
+
+
+# --- 2. TU ADMINISTRADOR DE CLIENTES ACTUALIZADO ---
 @admin.register(Cliente)
 class ClienteAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'correo', 'telefono', 'ver_proyectos_interes')
+    list_display = (
+        'nombre',
+        'nro_documento',
+        'telefono',
+        'es_prospecto_inmobiliario',
+        'es_prestatario',
+        'ver_proyectos_interes'
+    )
+
+    # Conectamos el filtro unificado aquí
+    list_filter = (RolClienteFilter,)
+
+    list_editable = ('es_prospecto_inmobiliario', 'es_prestatario')
+
     search_fields = ('nombre', 'correo', 'nro_documento')
+
+    fieldsets = (
+        ('Información Personal', {
+            'fields': ('nombre', 'tipo_documento', 'nro_documento', 'correo', 'telefono', 'direccion')
+        }),
+        ('Rol del Cliente en Casa18', {
+            'fields': ('es_prospecto_inmobiliario', 'es_prestatario'),
+            'description': 'Marca las casillas según el tipo de relación con la empresa.'
+        }),
+    )
 
     class InteresInline(admin.TabularInline):
         model = ClienteProyecto
@@ -89,11 +133,21 @@ class ClienteAdmin(admin.ModelAdmin):
     inlines = [InteresInline]
 
     def ver_proyectos_interes(self, obj):
-        intereses = obj.clienteproyecto_set.all()
+        intereses = obj.intereses_proyectos.all()
+        if not intereses:
+            return "-"
         return ", ".join([i.proyecto.nombre for i in intereses])
 
     ver_proyectos_interes.short_description = "Proyectos de Interés"
 
+    # ====================================================================
+    # CONTROL DE ACCESO
+    # ====================================================================
+    # def get_queryset(self, request):
+    #     qs = super().get_queryset(request)
+    #     if not request.user.is_superuser:
+    #         return qs.exclude(es_prestatario=True)
+    #     return qs
 
 @admin.register(Proyecto)
 class ProyectoAdmin(admin.ModelAdmin):
@@ -422,7 +476,7 @@ class InversionAdmin(admin.ModelAdmin):
     inlines = [CuotaInversionInline, DocumentoInline]
 
     list_display = ('id', 'inversor', 'proyecto', 'ver_capital', 'responsable_pago', 'fecha_desembolso', 'estado')
-    list_filter = ('proyecto', 'responsable_pago', 'estado', 'moneda', 'frecuencia')
+    list_filter = ('inversor','proyecto', 'responsable_pago', 'estado', 'moneda', 'frecuencia')
     search_fields = ('inversor__nombre_completo', 'id')
     autocomplete_fields = ['inversor', 'proyecto']
     save_on_top = True
@@ -485,6 +539,7 @@ class AgendaPagosAdmin(admin.ModelAdmin):
     list_filter = (
         FiltroCobrosFuturos,
         'estado',
+        'inversion__inversor',
         'inversion__proyecto',
         'inversion__moneda'
     )
