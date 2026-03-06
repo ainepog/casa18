@@ -386,14 +386,16 @@ class CuotaInversionInline(admin.TabularInline):
 
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
-        # (Aunque como ahora la mayoría son readonly, esto solo aplicará si dejas alguno editable)
-        if db_field.name in ['interes_bruto', 'monto_impuesto', 'interes_neto', 'amortizacion_capital', 'total_pagar']:
-            formfield.widget.attrs.update({'style': 'width: 100px;'})
-        if db_field.name == 'nro_cuota':
-            formfield.widget.attrs.update({
-                'readonly': 'readonly',
-                'style': 'width: 50px; background: #eee; border: none; text-align: center; font-weight: bold;'
-            })
+
+        if formfield:
+            if db_field.name in ['interes_bruto', 'monto_impuesto', 'interes_neto', 'amortizacion_capital',
+                                 'total_pagar']:
+                formfield.widget.attrs.update({'style': 'width: 100px;'})
+            if db_field.name == 'nro_cuota':
+                formfield.widget.attrs.update({
+                    'readonly': 'readonly',
+                    'style': 'width: 50px; background: #eee; border: none; text-align: center; font-weight: bold;'
+                })
         return formfield
 
 
@@ -433,13 +435,6 @@ class InversionForm(forms.ModelForm):
         model = Inversion
         fields = '__all__'
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Solo relajamos estos 3, la fecha de desembolso vuelve a ser obligatoria normal
-        self.fields['tea_anual'].required = False
-        self.fields['plazo_meses'].required = False
-        self.fields['frecuencia'].required = False
-
     def clean(self):
         cleaned_data = super().clean()
         tipo_calculo = cleaned_data.get('tipo_calculo')
@@ -465,6 +460,12 @@ class InversionForm(forms.ModelForm):
                 self.add_error('frecuencia', 'Este campo es obligatorio.')
 
         return cleaned_data
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for campo in ['tea_anual', 'plazo_meses', 'frecuencia']:
+            if campo in self.fields:
+                self.fields[campo].required = False
 
 
 @admin.register(Inversion)
@@ -673,13 +674,15 @@ class CuotaPrestamoTerceroInline(admin.TabularInline):
 
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
-        if db_field.name in ['interes', 'amortizacion_capital', 'total_pagar']:
-            formfield.widget.attrs.update({'style': 'width: 100px;'})
-        if db_field.name == 'nro_cuota':
-            formfield.widget.attrs.update({
-                'readonly': 'readonly',
-                'style': 'width: 50px; background: #eee; border: none; text-align: center; font-weight: bold;'
-            })
+
+        if formfield:
+            if db_field.name in ['interes', 'amortizacion_capital', 'total_pagar']:
+                formfield.widget.attrs.update({'style': 'width: 100px;'})
+            if db_field.name == 'nro_cuota':
+                formfield.widget.attrs.update({
+                    'readonly': 'readonly',
+                    'style': 'width: 50px; background: #eee; border: none; text-align: center; font-weight: bold;'
+                })
         return formfield
 
     def get_fields(self, request, obj=None):
