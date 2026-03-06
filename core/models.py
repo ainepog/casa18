@@ -263,7 +263,6 @@ class Inversor(models.Model):
     banco = models.CharField(max_length=50, choices=BANCOS_CHOICES, blank=True, null=True, verbose_name='Banco de Abono')
     cuenta_abono = models.CharField(max_length=50, blank=True, null=True, verbose_name='Número de Cuenta')
     cci = models.CharField(max_length=50, blank=True, null=True, verbose_name='Código de Cuenta Interbancario (CCI)')
-
     banco_personalizado = models.CharField(
         max_length=50,
         blank=True,
@@ -323,7 +322,7 @@ class Inversion(models.Model):
         choices=TIPO_CALCULO_CHOICES,
         default='FINANCIERO'
     )
-    # ===========================================
+
 
     estado = models.CharField(max_length=20, default='Activo', editable=False)
 
@@ -348,7 +347,7 @@ class Inversion(models.Model):
             return
 
         # ====================================================
-        # BLOQUE CORREGIDO PARA EQUITY (Socios Capitalistas)
+        # EQUITY (Socios Capitalistas)
         # ====================================================
         if self.tipo_calculo == 'EQUITY':
             self.cuotas.all().delete()

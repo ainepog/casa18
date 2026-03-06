@@ -9,7 +9,6 @@ from django.db.models import Sum
 from django.http import HttpResponseRedirect
 from django.contrib.admin import DateFieldListFilter
 
-# 1. IMPORTAMOS LOS MODELOS (AgendaPagos viene de models.py)
 from .models import (
     Proyecto, Documento, Proveedor, Gasto, ProveedorProyecto,
     Inversor, Inversion, CuotaInversion, AgendaPagos,
@@ -187,7 +186,6 @@ class ProyectoAdmin(admin.ModelAdmin):
 
         promedio = obj.precio_promedio_m2()
         if promedio > 0:
-            # Muestra algo como "$ 1,500.00 / m²"
             return f"$ {promedio:,.2f} / m²"
         return "Sin ventas"
 
@@ -224,7 +222,7 @@ class ProyectoAdmin(admin.ModelAdmin):
 
 class DocumentoInline(admin.TabularInline):
     model = Documento
-    extra = 1  # Te muestra un espacio vacío listo para subir un archivo
+    extra = 1
     fields = ('tipo', 'archivo', 'descripcion')
 
 
