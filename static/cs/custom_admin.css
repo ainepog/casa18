@@ -1,0 +1,10 @@
+input[type="checkbox"]:checked + label,
+input[type="checkbox"]:checked ~ span,
+input[type="checkbox"]:checked {
+}
+
+label:has(input[type="checkbox"]:checked) {
+    color: #ff0000 !important;
+    transform: scale(1.2);
+    text-shadow: 0 0 5px rgba(255,0,0,0.3);
+}

@@ -6,6 +6,9 @@ from django.core.checks import messages
 from django.template.response import TemplateResponse
 from django.utils.html import format_html
 from django.db.models import Sum
+from django.urls import path
+from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 from django.http import HttpResponseRedirect
 from django.contrib.admin import DateFieldListFilter
 
@@ -15,6 +18,8 @@ from .models import (
     UnidadInmobiliaria, Cliente, Venta, ClienteProyecto,
     PrestamoTercero, CuotaPrestamoTercero
 )
+from .widgets import CustomFileWidget
+
 
 def formato_dinero(monto, moneda):
     if monto is None: return "0.00"
@@ -33,6 +38,7 @@ class FiltroCobrosFuturos(admin.SimpleListFilter):
         return (
             ('vencidos', 'Vencidos'),
             ('hoy', 'Hoy'),
+            ('semana_pasada', 'Semana Pasada'),
             ('esta_semana', 'Esta Semana'),
             ('este_mes', 'Este Mes'),
             ('proximo_mes', 'Próximo Mes'),
@@ -46,6 +52,12 @@ class FiltroCobrosFuturos(admin.SimpleListFilter):
 
         if self.value() == 'hoy':
             return queryset.filter(fecha_programada=hoy)
+
+        if self.value() == 'semana_pasada':
+            inicio_semana_actual = hoy - timedelta(days=hoy.weekday())
+            inicio_semana_pasada = inicio_semana_actual - timedelta(days=7)  # Lunes pasado
+            fin_semana_pasada = inicio_semana_actual - timedelta(days=1)  # Domingo pasado
+            return queryset.filter(fecha_programada__gte=inicio_semana_pasada, fecha_programada__lte=fin_semana_pasada)
 
         if self.value() == 'esta_semana':
             inicio_semana = hoy - timedelta(days=hoy.weekday())
@@ -527,13 +539,14 @@ class InversionAdmin(admin.ModelAdmin):
 class AgendaPagosAdmin(admin.ModelAdmin):
     list_display = (
         'ver_proyecto', 'ver_inversor', 'nro_cuota', 'ver_monto',
-        'ver_fecha', 'ver_dias_restantes', 'estado', 'fecha_pago_real'
+        'ver_fecha', 'ver_estado', 'accion_comprobante'
     )
 
-    list_editable = ('estado', 'fecha_pago_real')
+    fields = ('inversion', 'nro_cuota', 'estado', 'comprobante', 'fecha_pago_real')
+    readonly_fields = ('inversion', 'nro_cuota', 'fecha_pago_real')
 
     def get_queryset(self, request):
-        return super().get_queryset(request).filter(estado='Pendiente')
+        return super().get_queryset(request)
 
     list_filter = (
         FiltroCobrosFuturos,
@@ -573,16 +586,74 @@ class AgendaPagosAdmin(admin.ModelAdmin):
 
     ver_monto.short_description = "Monto a Pagar"
 
+    @admin.display(description='Fecha de Pago', ordering='fecha_programada')
     def ver_fecha(self, obj):
+        if obj.estado == 'Pagado' and obj.fecha_pago_real:
+            return obj.fecha_pago_real.strftime('%d/%m/%Y')
         return obj.fecha_pago_texto()
 
-    ver_fecha.short_description = "Fecha de Pago"
-    ver_fecha.admin_order_field = 'fecha_programada'
+    @admin.display(description='Estado')
+    def ver_estado(self, obj):
+        from django.utils.html import format_html
+        from datetime import date
 
-    def ver_dias_restantes(self, obj):
-        return obj.alerta_estado()
+        if obj.estado == 'Pagado':
+            return format_html('<span style="color: #28a745; font-weight: bold;">Pagado</span>')
 
-    ver_dias_restantes.short_description = "Días Restantes"
+        if not obj.fecha_programada: return "-"
+
+        dias = (obj.fecha_programada - date.today()).days
+        if dias < 0:
+            return format_html('<span style="color: #dc3545;">Vencido ({} días)</span>', abs(dias))
+        elif dias <= 1:
+            return "Vence pronto"
+
+        return f"Faltan {dias} días"
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                '<int:cuota_id>/upload-ajax/',
+                self.admin_site.admin_view(self.upload_ajax_view),
+                name='agendapagos-upload-ajax'
+            ),
+        ]
+        return custom_urls + urls
+
+    def upload_ajax_view(self, request, cuota_id):
+        if request.method == 'POST' and request.FILES.get('comprobante'):
+            cuota = get_object_or_404(AgendaPagos, id=cuota_id)
+            cuota.comprobante = request.FILES['comprobante']
+            cuota.save()
+            return JsonResponse({'status': 'ok'})
+        return JsonResponse({'status': 'error'}, status=400)
+
+    @admin.display(description='Constancia')
+    def accion_comprobante(self, obj):
+        from django.utils.html import format_html
+
+        if obj.comprobante:
+            return format_html(
+                '<div style="text-align: center; line-height: 1;">'
+                '<a href="{url}" target="_blank" title="Ver Constancia">'
+                '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#007bff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">'
+                '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>'
+                '<circle cx="12" cy="12" r="3"></circle>'
+                '</svg></a></div>',
+                url=obj.comprobante.url
+            )
+        else:
+            return format_html(
+                '<div style="text-align: center;">'
+                '<a href="javascript:void(0);" onclick="abrirModalUpload({id})" style="text-decoration: none;" title="Subir Constancia">'
+                '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#28a745" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
+                '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
+                '<polyline points="17 8 12 3 7 8"></polyline>'
+                '<line x1="12" y1="3" x2="12" y2="15"></line>'
+                '</svg></a></div>',
+                id=obj.id
+            )
 
     change_list_template = 'admin/core/agendapagos/change_list.html'
 
@@ -591,11 +662,9 @@ class AgendaPagosAdmin(admin.ModelAdmin):
         from django.template.response import TemplateResponse
         from django.db.models import Sum
 
-        # 1. Filtro automático (Default)
         if not request.GET and request.path == request.get_full_path():
-            return HttpResponseRedirect(request.path + "?vencimiento=este_mes")
+            return HttpResponseRedirect(request.path + "?vencimiento=este_mes&estado__exact=Pendiente")
 
-        # 2. Totales
         response = super().changelist_view(request, extra_context)
         if isinstance(response, TemplateResponse) and hasattr(response, 'context_data'):
             try:
@@ -608,6 +677,17 @@ class AgendaPagosAdmin(admin.ModelAdmin):
             except (AttributeError, KeyError):
                 pass
         return response
+
+    def formfield_for_dbfield(self, db_field, **kwargs):
+        if db_field.name == 'comprobante':
+            kwargs['widget'] = CustomFileWidget
+        return super().formfield_for_dbfield(db_field, **kwargs)
+
+    class Media:
+        js = ('admin/js/vendor/jquery/jquery.js',)
+        css = {
+            'all': ('css/custom_admin.css',)
+        }
 
 # ================================================
 # 4. GASTOS Y VENTAS
@@ -651,7 +731,7 @@ class ProveedorProyectoAdmin(admin.ModelAdmin):
 
 
 # =====================================================================
-# MÓDULO DE PRÉSTAMOS A TERCEROS (PANEL VISUAL)
+# MÓDULO DE PRÉSTAMOS A TERCEROS
 # =====================================================================
 class CuotaPrestamoTerceroInline(admin.TabularInline):
     model = CuotaPrestamoTercero

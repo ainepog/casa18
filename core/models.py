@@ -1,3 +1,5 @@
+import os
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.core.validators import MinValueValidator
@@ -457,6 +459,11 @@ class Inversion(models.Model):
         Inversion.objects.filter(id=self.id).update(estado=nuevo_estado)
 
 
+def ruta_comprobante(instance, filename):
+    ext = filename.split('.')[-1]
+    nuevo_nombre = f"constancia_inv{instance.inversion.id}_nro{instance.nro_cuota}.{ext}"
+    return os.path.join('casa18/inversiones/cuotas/', nuevo_nombre)
+
 class CuotaInversion(models.Model):
     inversion = models.ForeignKey(Inversion, related_name='cuotas', on_delete=models.CASCADE)
     nro_cuota = models.IntegerField()
@@ -472,7 +479,8 @@ class CuotaInversion(models.Model):
     es_ultima_cuota = models.BooleanField(default=False)
     estado = models.CharField(max_length=20, choices=[('Pendiente', 'Pendiente'), ('Pagado', 'Pagado')],
                               default='Pendiente')
-    comprobante = models.FileField(upload_to='casa18/inversiones/cuotas/%Y/%m/', null=True, blank=True)
+    comprobante = models.FileField(upload_to=ruta_comprobante, null=True, blank=True)
+
     def fecha_pago_texto(self):
         if not self.fecha_programada:
             return "-"
@@ -499,12 +507,35 @@ class CuotaInversion(models.Model):
             return "Vence Pronto"
         return f"Faltan {dias} días"
 
+    def save(self, *args, **kwargs):
+        from datetime import date
+
+        if self.estado == 'Pendiente':
+            self.fecha_pago_real = None
+
+        elif self.comprobante and not self.fecha_pago_real:
+            self.fecha_pago_real = date.today()
+            self.estado = 'Pagado'
+
+        elif self.estado == 'Pagado' and not self.fecha_pago_real:
+            self.fecha_pago_real = date.today()
+
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Cuota #{self.nro_cuota}"
 
     class Meta: verbose_name_plural = "Cuotas"
 
 class AgendaPagos(CuotaInversion):
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old_obj = AgendaPagos.objects.get(pk=self.pk)
+            if old_obj.comprobante and self.comprobante != old_obj.comprobante:
+                if os.path.isfile(old_obj.comprobante.path):
+                    os.remove(old_obj.comprobante.path)
+
+        super().save(*args, **kwargs)
     class Meta:
         proxy = True
         verbose_name = "Agenda de Pagos"
