@@ -3,11 +3,23 @@ let currentCuotaId = null;
 // ==========================================
 // 1. CONTROL DE APERTURA Y CIERRE DE MODALES
 // ==========================================
-function abrirModalUpload(id) {
-    currentCuotaId = id;
-    document.getElementById('modalUpload').style.display = 'flex';
-    document.getElementById('uploadStatus').innerText = '';
-}
+function abrirModalUpload(id, fieldName = 'comprobante') {
+            if (!id || id === 'null') {
+                const match = window.location.pathname.match(/agendapagos\/(\d+)\/change/);
+
+                if (match) {
+                    id = match[1];
+                } else {
+                    alert("Error: No se pudo detectar el ID de la cuota. Si es una cuota nueva, guárdela primero.");
+                    return;
+                }
+            }
+
+            currentCuotaId = id;
+            currentFieldName = fieldName;
+            document.getElementById('modalUpload').style.display = 'flex';
+            document.getElementById('uploadStatus').innerText = '';
+        }
 
 function abrirModalPreview(url) {
     const previewFrame = document.getElementById('previewFrame');
@@ -68,24 +80,24 @@ function uploadFile(file) {
     statusDiv.innerText = 'Subiendo archivo... ';
 
     const formData = new FormData();
-    formData.append('comprobante', file);
+    // Usa la variable para saber si es comprobante, factura o retencion
+    formData.append(currentFieldName, file);
 
     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
 
-    const basePath = window.location.pathname.split('?')[0];
+    // Ruta estática absoluta para evitar errores de 404 al estar dentro del modo "Edit"
+    const ajaxUrl = `/admin/core/agendapagos/${currentCuotaId}/upload-ajax/`;
 
-    fetch(`${basePath}${currentCuotaId}/upload-ajax/`, {
+    fetch(ajaxUrl, {
         method: 'POST',
-        headers: {
-            'X-CSRFToken': csrfToken
-        },
+        headers: { 'X-CSRFToken': csrfToken },
         body: formData
     })
     .then(response => response.json())
     .then(data => {
         if(data.status === 'ok') {
             statusDiv.style.color = '#28a745';
-            statusDiv.innerText = 'Constancia guardada';
+            statusDiv.innerText = 'Documento guardado';
             setTimeout(() => location.reload(), 800);
         } else {
             throw new Error('El servidor devolvió un error.');

@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import calendar
 from django.contrib import admin
 from django import forms
@@ -31,7 +31,7 @@ def formato_dinero(monto, moneda):
 # 0. FILTRO PERSONALIZADO
 # ================================================
 class FiltroCobrosFuturos(admin.SimpleListFilter):
-    title = 'Filtros'
+    title = 'Filtros de Tiempo'
     parameter_name = 'vencimiento'
 
     def lookups(self, request, model_admin):
@@ -40,6 +40,7 @@ class FiltroCobrosFuturos(admin.SimpleListFilter):
             ('hoy', 'Hoy'),
             ('semana_pasada', 'Semana Pasada'),
             ('esta_semana', 'Esta Semana'),
+            ('mes_pasado', 'Mes Pasado'),
             ('este_mes', 'Este Mes'),
             ('proximo_mes', 'Próximo Mes'),
         )
@@ -48,40 +49,43 @@ class FiltroCobrosFuturos(admin.SimpleListFilter):
         hoy = date.today()
 
         if self.value() == 'vencidos':
-            return queryset.filter(fecha_programada__lt=hoy)
+            return queryset.filter(fecha_programada__lt=hoy).exclude(estado='Pagado')
 
-        if self.value() == 'hoy':
+        elif self.value() == 'hoy':
             return queryset.filter(fecha_programada=hoy)
 
-        if self.value() == 'semana_pasada':
+        elif self.value() == 'semana_pasada':
             inicio_semana_actual = hoy - timedelta(days=hoy.weekday())
-            inicio_semana_pasada = inicio_semana_actual - timedelta(days=7)  # Lunes pasado
-            fin_semana_pasada = inicio_semana_actual - timedelta(days=1)  # Domingo pasado
-            return queryset.filter(fecha_programada__gte=inicio_semana_pasada, fecha_programada__lte=fin_semana_pasada)
+            inicio_semana_pasada = inicio_semana_actual - timedelta(days=7)
+            fin_semana_pasada = inicio_semana_actual - timedelta(days=1)
+            return queryset.filter(fecha_programada__range=[inicio_semana_pasada, fin_semana_pasada])
 
-        if self.value() == 'esta_semana':
+        elif self.value() == 'esta_semana':
             inicio_semana = hoy - timedelta(days=hoy.weekday())
             fin_semana = inicio_semana + timedelta(days=6)
-            return queryset.filter(fecha_programada__gte=hoy, fecha_programada__lte=fin_semana)
+            return queryset.filter(fecha_programada__range=[inicio_semana, fin_semana])
 
-        if self.value() == 'este_mes':
+        elif self.value() == 'mes_pasado':
+            primer_dia_este_mes = date(hoy.year, hoy.month, 1)
+            ultimo_dia_mes_pasado = primer_dia_este_mes - timedelta(days=1)
+            primer_dia_mes_pasado = date(ultimo_dia_mes_pasado.year, ultimo_dia_mes_pasado.month, 1)
+            return queryset.filter(fecha_programada__range=[primer_dia_mes_pasado, ultimo_dia_mes_pasado])
+
+        elif self.value() == 'este_mes':
             ultimo_dia = calendar.monthrange(hoy.year, hoy.month)[1]
+            inicio_mes = date(hoy.year, hoy.month, 1)
             fin_mes = date(hoy.year, hoy.month, ultimo_dia)
-            return queryset.filter(fecha_programada__gte=hoy, fecha_programada__lte=fin_mes)
+            return queryset.filter(fecha_programada__range=[inicio_mes, fin_mes])
 
-        if self.value() == 'proximo_mes':
-            if hoy.month == 12:
-                prox_mes = 1
-                prox_anio = hoy.year + 1
-            else:
-                prox_mes = hoy.month + 1
-                prox_anio = hoy.year
-
+        elif self.value() == 'proximo_mes':
+            prox_mes = hoy.month + 1 if hoy.month < 12 else 1
+            prox_anio = hoy.year if hoy.month < 12 else hoy.year + 1
             ultimo_dia_prox = calendar.monthrange(prox_anio, prox_mes)[1]
             inicio = date(prox_anio, prox_mes, 1)
             fin = date(prox_anio, prox_mes, ultimo_dia_prox)
-            return queryset.filter(fecha_programada__gte=inicio, fecha_programada__lte=fin)
+            return queryset.filter(fecha_programada__range=[inicio, fin])
 
+        return queryset
 
 # ================================================
 # 1. MODELOS BASE
@@ -535,6 +539,8 @@ class InversionAdmin(admin.ModelAdmin):
 # 3. AGENDA DE PAGOS
 # ================================================
 
+
+
 @admin.register(AgendaPagos)
 class AgendaPagosAdmin(admin.ModelAdmin):
     list_display = (
@@ -542,7 +548,7 @@ class AgendaPagosAdmin(admin.ModelAdmin):
         'ver_fecha', 'ver_estado', 'accion_comprobante'
     )
 
-    fields = ('inversion', 'nro_cuota', 'estado', 'comprobante', 'fecha_pago_real')
+    fields = ('inversion', 'nro_cuota', 'estado', 'comprobante', 'factura', 'retencion', 'fecha_pago_real')
     readonly_fields = ('inversion', 'nro_cuota', 'fecha_pago_real')
 
     def get_queryset(self, request):
@@ -622,21 +628,41 @@ class AgendaPagosAdmin(admin.ModelAdmin):
         return custom_urls + urls
 
     def upload_ajax_view(self, request, cuota_id):
-        if request.method == 'POST' and request.FILES.get('comprobante'):
+        from django.http import JsonResponse
+        from django.shortcuts import get_object_or_404
+
+        if request.method == 'POST':
             cuota = get_object_or_404(AgendaPagos, id=cuota_id)
-            cuota.comprobante = request.FILES['comprobante']
+
+            nombre = request.user.first_name or request.user.username
+            fecha_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
+            nota = f"por {nombre} el {fecha_hora}"
+
+            if 'comprobante' in request.FILES:
+                cuota.comprobante_log = f"Actualizado {nota}" if cuota.comprobante else f"Subido {nota}"
+                cuota.comprobante = request.FILES['comprobante']
+            elif 'factura' in request.FILES:
+                cuota.factura_log = f"Actualizado {nota}" if cuota.factura else f"Subido {nota}"
+                cuota.factura = request.FILES['factura']
+            elif 'retencion' in request.FILES:
+                cuota.retencion_log = f"Actualizado {nota}" if cuota.retencion else f"Subido {nota}"
+                cuota.retencion = request.FILES['retencion']
+            else:
+                return JsonResponse({'status': 'error', 'message': 'Archivo no válido'}, status=400)
+
             cuota.save()
             return JsonResponse({'status': 'ok'})
+
         return JsonResponse({'status': 'error'}, status=400)
 
-    @admin.display(description='Constancia')
+    @admin.display(description='Comprobante')
     def accion_comprobante(self, obj):
         from django.utils.html import format_html
 
         if obj.comprobante:
             return format_html(
                 '<div style="text-align: center; line-height: 1;">'
-                '<a href="{url}" target="_blank" title="Ver Constancia">'
+                '<a href="{url}" target="_blank" title="Ver Documento">'
                 '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#007bff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">'
                 '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>'
                 '<circle cx="12" cy="12" r="3"></circle>'
@@ -656,6 +682,7 @@ class AgendaPagosAdmin(admin.ModelAdmin):
             )
 
     change_list_template = 'admin/core/agendapagos/change_list.html'
+    change_form_template = 'admin/core/agendapagos/change_form.html'
 
     def changelist_view(self, request, extra_context=None):
         from django.http import HttpResponseRedirect
@@ -679,9 +706,17 @@ class AgendaPagosAdmin(admin.ModelAdmin):
         return response
 
     def formfield_for_dbfield(self, db_field, **kwargs):
-        if db_field.name == 'comprobante':
+        if db_field.name in ['comprobante', 'factura', 'retencion']:
             kwargs['widget'] = CustomFileWidget
         return super().formfield_for_dbfield(db_field, **kwargs)
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if obj:
+            for field in ['comprobante', 'factura', 'retencion']:
+                if field in form.base_fields:
+                    form.base_fields[field].widget.attrs['data-obj-id'] = obj.id
+        return form
 
     class Media:
         js = ('admin/js/vendor/jquery/jquery.js',)

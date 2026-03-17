@@ -461,11 +461,19 @@ class Inversion(models.Model):
 
 def ruta_comprobante(instance, filename):
     ext = filename.split('.')[-1]
-    nuevo_nombre = f"constancia_inv{instance.inversion.id}_nro{instance.nro_cuota}.{ext}"
-    return os.path.join('casa18/inversiones/cuotas/', nuevo_nombre)
+    return os.path.join('casa18/inversiones/cuotas/comprobantes/', f"comprobante_inv{instance.inversion.id}_nro{instance.nro_cuota}.{ext}")
+
+def ruta_factura(instance, filename):
+    ext = filename.split('.')[-1]
+    return os.path.join('casa18/inversiones/cuotas/facturas/', f"factura_inv{instance.inversion.id}_nro{instance.nro_cuota}.{ext}")
+
+def ruta_retencion(instance, filename):
+    ext = filename.split('.')[-1]
+    return os.path.join('casa18/inversiones/cuotas/retenciones/', f"retencion_inv{instance.inversion.id}_nro{instance.nro_cuota}.{ext}")
+
 
 class CuotaInversion(models.Model):
-    inversion = models.ForeignKey(Inversion, related_name='cuotas', on_delete=models.CASCADE)
+    inversion = models.ForeignKey('Inversion', related_name='cuotas', on_delete=models.CASCADE)
     nro_cuota = models.IntegerField()
     fecha_programada = models.DateField()
     fecha_pago_real = models.DateField(null=True, blank=True)
@@ -479,26 +487,29 @@ class CuotaInversion(models.Model):
     es_ultima_cuota = models.BooleanField(default=False)
     estado = models.CharField(max_length=20, choices=[('Pendiente', 'Pendiente'), ('Pagado', 'Pagado')],
                               default='Pendiente')
-    comprobante = models.FileField(upload_to=ruta_comprobante, null=True, blank=True)
+
+    comprobante = models.FileField(upload_to=ruta_comprobante, null=True, blank=True, verbose_name="Comprobante")
+    factura = models.FileField(upload_to=ruta_factura, null=True, blank=True, verbose_name="Factura")
+    retencion = models.FileField(upload_to=ruta_retencion, null=True, blank=True,
+                                 verbose_name="Retención Impuesto a la Renta")
+
+    comprobante_log = models.CharField(max_length=255, blank=True, null=True)
+    factura_log = models.CharField(max_length=255, blank=True, null=True)
+    retencion_log = models.CharField(max_length=255, blank=True, null=True)
 
     def fecha_pago_texto(self):
         if not self.fecha_programada:
             return "-"
-
         dias = {0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 4: 'Viernes', 5: 'Sábado', 6: 'Domingo'}
         meses = {1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
                  7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'}
-
         f = self.fecha_programada
-        dia_nombre = dias[f.weekday()]
-        mes_nombre = meses[f.month]
+        return f"{dias[f.weekday()]}, {f.day} de {meses[f.month]} de {f.year}"
 
-        return f"{dia_nombre}, {f.day} de {mes_nombre} de {f.year}"
     fecha_pago_texto.short_description = "Fecha de Pago"
 
     def alerta_estado(self):
         if not self.fecha_programada: return "—"
-
         if self.estado == 'Pagado': return "Pagado"
         dias = (self.fecha_programada - date.today()).days
         if dias < 0:
@@ -508,15 +519,31 @@ class CuotaInversion(models.Model):
         return f"Faltan {dias} días"
 
     def save(self, *args, **kwargs):
-        from datetime import date
+        if not self.comprobante: self.comprobante_log = None
+        if not self.factura: self.factura_log = None
+        if not self.retencion: self.retencion_log = None
+
+        if self.pk:
+            try:
+                old_obj = CuotaInversion.objects.get(pk=self.pk)
+
+                if old_obj.comprobante and self.comprobante != old_obj.comprobante:
+                    if os.path.isfile(old_obj.comprobante.path): os.remove(old_obj.comprobante.path)
+
+                if old_obj.factura and self.factura != old_obj.factura:
+                    if os.path.isfile(old_obj.factura.path): os.remove(old_obj.factura.path)
+
+                if old_obj.retencion and self.retencion != old_obj.retencion:
+                    if os.path.isfile(old_obj.retencion.path): os.remove(old_obj.retencion.path)
+
+            except CuotaInversion.DoesNotExist:
+                pass
 
         if self.estado == 'Pendiente':
             self.fecha_pago_real = None
-
         elif self.comprobante and not self.fecha_pago_real:
             self.fecha_pago_real = date.today()
             self.estado = 'Pagado'
-
         elif self.estado == 'Pagado' and not self.fecha_pago_real:
             self.fecha_pago_real = date.today()
 
@@ -525,17 +552,11 @@ class CuotaInversion(models.Model):
     def __str__(self):
         return f"Cuota #{self.nro_cuota}"
 
-    class Meta: verbose_name_plural = "Cuotas"
+    class Meta:
+        verbose_name_plural = "Cuotas"
+
 
 class AgendaPagos(CuotaInversion):
-    def save(self, *args, **kwargs):
-        if self.pk:
-            old_obj = AgendaPagos.objects.get(pk=self.pk)
-            if old_obj.comprobante and self.comprobante != old_obj.comprobante:
-                if os.path.isfile(old_obj.comprobante.path):
-                    os.remove(old_obj.comprobante.path)
-
-        super().save(*args, **kwargs)
     class Meta:
         proxy = True
         verbose_name = "Agenda de Pagos"

@@ -5,13 +5,12 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="f148048d-31b3-4b80-a001-c303b89e5660" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/core/widgets.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/static/cs/custom_admin.css" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/static/js/agendapagos_models.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/templates/admin/core/agendapagos/change_form.html" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Casa18/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/Casa18/settings.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/core/admin.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/admin.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/core/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/core/widgets.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/widgets.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/static/js/agendapagos_models.js" beforeDir="false" afterPath="$PROJECT_DIR$/static/js/agendapagos_models.js" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/templates/admin/core/agendapagos/change_list.html" beforeDir="false" afterPath="$PROJECT_DIR$/templates/admin/core/agendapagos/change_list.html" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -22,9 +21,9 @@
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
       <list>
-        <option value="HTML File" />
         <option value="JavaScript File" />
         <option value="Python Script" />
+        <option value="HTML File" />
       </list>
     </option>
   </component>
@@ -48,7 +47,7 @@
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.pycharm.django.structure.promotion.once.per.project": "true",
-    "django.template.preview.state": "SHOW_EDITOR",
+    "django.template.preview.state": "SHOW_EDITOR_AND_PREVIEW",
     "git-widget-placeholder": "master",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
@@ -121,7 +120,7 @@
       <workItem from="1771711291108" duration="21230000" />
       <workItem from="1771944093260" duration="11729000" />
       <workItem from="1772685227558" duration="6740000" />
-      <workItem from="1773278113437" duration="10157000" />
+      <workItem from="1773278113437" duration="21104000" />
     </task>
     <servers />
   </component>

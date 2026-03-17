@@ -5,7 +5,6 @@
 {% block extrastyle %}
 {{ block.super }}
 <style>
-    /* 1. Modales Sobrios - Estilo Admin */
     .modal-overlay {
         display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
         background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center;
@@ -18,15 +17,21 @@
     .close-btn:hover { color: #333; }
 
     .dropzone {
-        border: 2px dashed #007bff; /* Azul vibrante */
+        border: 2px dashed #007bff;
         border-radius: 4px; padding: 35px 20px;
-        background: #f0faff; /* Fondo azul pálido */
+        background: #f0faff;
         cursor: pointer; transition: all 0.15s ease-in-out; margin-top: 20px;
     }
-    .dropzone:hover { background: #e0f7fa; border-color: #5073ff; }
-    .dropzone.dragover { background: #e9ecef; border-color: #0056b3; }
+.dropzone:hover {
+        background: #eaf2ff;
+        border-color: #0056b3;
+    }
+    .dropzone.dragover {
+        background: #e2eafc;
+        border-color: #004085;
+    }
 
-    .dropzone p { margin: 0; color: #444; font-size: 14px; }
+    .dropzone p { margin: 0; color: #495057; font-size: 15px; line-height: 1.5; }
     .dropzone .icon {
         display: flex; justify-content: center; align-items: center;
         margin-bottom: 12px; pointer-events: none;
@@ -91,11 +96,13 @@
     <div id="modalUpload" class="modal-overlay">
         <div class="modal-content">
             <span class="close-btn" onclick="cerrarModal('modalUpload')">&times;</span>
-            <h3 style="margin: 0; color: #333; font-weight: 600; font-size: 18px;">Subir Constancia</h3>
+            <h3 style="margin: 0; color: #333; font-weight: 600; font-size: 18px;">Subir Documento</h3>
             <label class="dropzone" id="dropzone">
                 <div class="icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#007bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                     <svg xmlns="http://www.w3.org/2000/svg" width="45" height="45" viewBox="0 0 24 24" fill="none" stroke="#007bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 10px;">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
                     </svg>
                 </div>
                 <p style="color: #444;"><strong>Haga clic para seleccionar</strong> o arrastre el archivo</p>
