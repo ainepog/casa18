@@ -421,7 +421,7 @@ class CuotaInversionInline(admin.TabularInline):
                     'interes_neto', 'amortizacion_capital', 'total_pagar', 'estado')
 
         elif obj and obj.tipo_calculo == 'EQUITY':
-            return ('nro_cuota', 'ver_capital_invertido', 'fecha_programada', 'estado')
+            return 'nro_cuota', 'ver_capital_invertido', 'fecha_programada', 'estado'
 
         else:
             return ('nro_cuota', 'ver_bruto', 'ver_impuesto', 'ver_neto',
@@ -539,24 +539,66 @@ class InversionAdmin(admin.ModelAdmin):
 # 3. AGENDA DE PAGOS
 # ================================================
 
+class FiltroEstadoAgenda(admin.SimpleListFilter):
+    title = 'Estado'
+    parameter_name = 'estado_custom'
 
+    def lookups(self, request, model_admin):
+        return (
+            ('Pendiente', 'Pendientes'),
+            ('Pagado', 'Pagado'),
+        )
+
+    def choices(self, changelist):
+        yield {
+            'selected': self.value() is None,
+            'query_string': changelist.get_query_string(remove=[self.parameter_name]),
+            'display': 'Todos',
+        }
+        yield {
+            'selected': self.value() == 'Pendiente',
+            'query_string': changelist.get_query_string({self.parameter_name: 'Pendiente'}, []),
+            'display': 'Pendientes',
+        }
+        yield {
+            'selected': self.value() == 'Pagado',
+            'query_string': changelist.get_query_string({self.parameter_name: 'Pagado'}, []),
+            'display': 'Pagado',
+        }
+
+    def queryset(self, request, queryset):
+        from datetime import date
+        from django.db.models import Q
+
+        if self.value() == 'Pendiente':
+            hoy = date.today()
+            return queryset.filter(
+                Q(estado='Pendiente') |
+                Q(estado='Pagado', fecha_programada__gte=hoy)
+            )
+        if self.value() == 'Pagado':
+            return queryset.filter(estado='Pagado')
+        return queryset
 
 @admin.register(AgendaPagos)
 class AgendaPagosAdmin(admin.ModelAdmin):
-    list_display = (
-        'ver_proyecto', 'ver_inversor', 'nro_cuota', 'ver_monto',
-        'ver_fecha', 'ver_estado', 'accion_comprobante'
-    )
+    def get_list_display(self, request):
+        if request.user.is_superuser:
+            return ('ver_proyecto', 'ver_inversor', 'nro_cuota', 'ver_monto', 'ver_fecha_editable', 'ver_estado',
+                    'accion_comprobante')
+        return (
+        'ver_proyecto', 'ver_inversor', 'nro_cuota', 'ver_monto', 'ver_fecha', 'ver_estado', 'accion_comprobante')
 
-    fields = ('inversion', 'nro_cuota', 'estado', 'comprobante', 'factura', 'retencion', 'fecha_pago_real')
-    readonly_fields = ('inversion', 'nro_cuota', 'fecha_pago_real')
+    fields = ('inversion', 'nro_cuota', 'estado', 'ver_ultima_edicion', 'comprobante', 'factura', 'retencion',
+              'ver_fecha_vencimiento')
+    readonly_fields = ('inversion', 'nro_cuota', 'ver_ultima_edicion', 'ver_fecha_vencimiento')
 
     def get_queryset(self, request):
         return super().get_queryset(request)
 
     list_filter = (
         FiltroCobrosFuturos,
-        'estado',
+        FiltroEstadoAgenda,  # Filtro personalizado conectado
         'inversion__inversor',
         'inversion__proyecto',
         'inversion__moneda'
@@ -587,10 +629,26 @@ class AgendaPagosAdmin(admin.ModelAdmin):
     def ver_monto(self, obj):
         simbolo = 'S/' if obj.inversion.moneda == 'PEN' else '$'
         monto_str = f"{simbolo} {obj.total_pagar:,.2f}"
-        from django.utils.html import format_html
         return format_html("<span style='color:green; font-weight:bold'>{}</span>", monto_str)
 
     ver_monto.short_description = "Monto a Pagar"
+
+    @admin.display(description='Fecha de Vencimiento')
+    def ver_fecha_vencimiento(self, obj):
+        if obj.fecha_programada:
+            return obj.fecha_programada.strftime('%d/%m/%Y')
+        return "-"
+
+    @admin.display(description='Última Modificación')
+    def ver_ultima_edicion(self, obj):
+        from django.utils.html import format_html
+
+        if obj.estado_log:
+            return format_html(
+                '<span style="color: #6c757d; font-style: italic;">{}</span>',
+                obj.estado_log
+            )
+        return format_html('<span style="color: #adb5bd; font-style: italic;">Sin registro de ediciones</span>')
 
     @admin.display(description='Fecha de Pago', ordering='fecha_programada')
     def ver_fecha(self, obj):
@@ -598,42 +656,105 @@ class AgendaPagosAdmin(admin.ModelAdmin):
             return obj.fecha_pago_real.strftime('%d/%m/%Y')
         return obj.fecha_pago_texto()
 
+    @admin.display(description='Fecha de Pago', ordering='fecha_programada')
+    def ver_fecha_editable(self, obj):
+        if obj.estado == 'Pagado' and obj.fecha_pago_real:
+            texto = obj.fecha_pago_real.strftime('%d/%m/%Y')
+            iso = obj.fecha_pago_real.strftime('%Y-%m-%d')
+        else:
+            texto = obj.fecha_pago_texto()
+            iso = obj.fecha_programada.strftime('%Y-%m-%d') if obj.fecha_programada else ''
+
+        es_equity = getattr(obj.inversion, 'tipo_calculo', '') == 'EQUITY'
+
+        if es_equity:
+            return format_html(
+                '''
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span>{texto}</span>
+                    <input type="date" id="input-fecha-cuota-{id}" value="{iso}" style="display: none;" 
+                           onchange="guardarFechaCuota({id}, this.value)">
+                    <a href="javascript:void(0);" onclick="abrirCalendarioCuota('{id}')" style="color: #007bff; margin-top: 3px;" title="Editar Fecha">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </a>
+                </div>
+                ''', id=obj.id, texto=texto, iso=iso
+            )
+        return texto
+
     @admin.display(description='Estado')
     def ver_estado(self, obj):
-        from django.utils.html import format_html
-        from datetime import date
+        log_texto = getattr(obj, 'estado_log', '')
+        html_log = f'<div style="font-size: 11px; color: #888; margin-top: 4px; line-height: 1.1;">{log_texto}</div>' if log_texto else ''
 
         if obj.estado == 'Pagado':
-            return format_html('<span style="color: #28a745; font-weight: bold;">Pagado</span>')
+            return format_html('<span style="color: #28a745; font-weight: bold;">Pagado</span>{}',
+                               format_html(html_log))
 
-        if not obj.fecha_programada: return "-"
+        if not obj.fecha_programada:
+            return format_html('-{}', format_html(html_log))
 
         dias = (obj.fecha_programada - date.today()).days
         if dias < 0:
-            return format_html('<span style="color: #dc3545;">Vencido ({} días)</span>', abs(dias))
+            estado_html = f'<span style="color: #dc3545;">Vencido ({abs(dias)} días)</span>'
         elif dias <= 1:
-            return "Vence pronto"
+            estado_html = "Vence pronto"
+        else:
+            estado_html = f"Faltan {dias} días"
 
-        return f"Faltan {dias} días"
+        return format_html('{}{}', format_html(estado_html), format_html(html_log))
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            nombre = request.user.first_name or request.user.username
+            fecha_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
+            obj.estado_log = f"Editado por {nombre} el {fecha_hora}"
+
+        super().save_model(request, obj, form, change)
 
     def get_urls(self):
         urls = super().get_urls()
         custom_urls = [
-            path(
-                '<int:cuota_id>/upload-ajax/',
-                self.admin_site.admin_view(self.upload_ajax_view),
-                name='agendapagos-upload-ajax'
-            ),
+            path('<int:cuota_id>/upload-ajax/', self.admin_site.admin_view(self.upload_ajax_view),
+                 name='agendapagos-upload-ajax'),
+            path('<int:cuota_id>/editar-fecha/', self.admin_site.admin_view(self.editar_fecha_ajax),
+                 name='agendapagos-editar-fecha'),
         ]
         return custom_urls + urls
 
-    def upload_ajax_view(self, request, cuota_id):
-        from django.http import JsonResponse
-        from django.shortcuts import get_object_or_404
+    def editar_fecha_ajax(self, request, cuota_id):
+        import json
+        if not request.user.is_superuser:
+            return JsonResponse({'status': 'error', 'message': 'Acceso denegado.'}, status=403)
 
         if request.method == 'POST':
-            cuota = get_object_or_404(AgendaPagos, id=cuota_id)
+            try:
+                data = json.loads(request.body)
+                cuota = get_object_or_404(AgendaPagos, id=cuota_id)
+                nueva_fecha = data.get('fecha')
 
+                if cuota.estado == 'Pagado':
+                    cuota.fecha_pago_real = nueva_fecha
+                else:
+                    cuota.fecha_programada = nueva_fecha
+
+                # Firma
+                nombre = request.user.first_name or request.user.username
+                fecha_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
+                cuota.estado_log = f"Editado por {nombre} el {fecha_hora}"
+
+                cuota.save()
+                return JsonResponse({'status': 'ok'})
+            except Exception as e:
+                return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+        return JsonResponse({'status': 'error'}, status=400)
+
+    def upload_ajax_view(self, request, cuota_id):
+        if request.method == 'POST':
+            cuota = get_object_or_404(AgendaPagos, id=cuota_id)
             nombre = request.user.first_name or request.user.username
             fecha_hora = datetime.now().strftime("%d/%m/%Y %H:%M")
             nota = f"por {nombre} el {fecha_hora}"
@@ -650,6 +771,8 @@ class AgendaPagosAdmin(admin.ModelAdmin):
             else:
                 return JsonResponse({'status': 'error', 'message': 'Archivo no válido'}, status=400)
 
+            # Firma global
+            cuota.estado_log = f"Editado por {nombre} el {fecha_hora}"
             cuota.save()
             return JsonResponse({'status': 'ok'})
 
@@ -657,8 +780,6 @@ class AgendaPagosAdmin(admin.ModelAdmin):
 
     @admin.display(description='Comprobante')
     def accion_comprobante(self, obj):
-        from django.utils.html import format_html
-
         if obj.comprobante:
             return format_html(
                 '<div style="text-align: center; line-height: 1;">'
@@ -685,12 +806,8 @@ class AgendaPagosAdmin(admin.ModelAdmin):
     change_form_template = 'admin/core/agendapagos/change_form.html'
 
     def changelist_view(self, request, extra_context=None):
-        from django.http import HttpResponseRedirect
-        from django.template.response import TemplateResponse
-        from django.db.models import Sum
-
         if not request.GET and request.path == request.get_full_path():
-            return HttpResponseRedirect(request.path + "?vencimiento=este_mes&estado__exact=Pendiente")
+            return HttpResponseRedirect(request.path + "?vencimiento=este_mes&estado_custom=Pendiente")
 
         response = super().changelist_view(request, extra_context)
         if isinstance(response, TemplateResponse) and hasattr(response, 'context_data'):

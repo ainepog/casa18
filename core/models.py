@@ -496,6 +496,7 @@ class CuotaInversion(models.Model):
     comprobante_log = models.CharField(max_length=255, blank=True, null=True)
     factura_log = models.CharField(max_length=255, blank=True, null=True)
     retencion_log = models.CharField(max_length=255, blank=True, null=True)
+    estado_log = models.CharField(max_length=255, blank=True, null=True)
 
     def fecha_pago_texto(self):
         if not self.fecha_programada:

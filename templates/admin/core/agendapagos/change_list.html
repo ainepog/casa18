@@ -129,4 +129,39 @@
         })(django.jQuery || window.jQuery);
     </script>
     <script src="{% static 'js/agendapagos_models.js' %}"></script>
+    <script type="text/javascript">
+        function abrirCalendarioCuota(id) {
+            document.getElementById(`input-fecha-cuota-${id}`).showPicker();
+        }
+
+        function guardarFechaCuota(id, nuevaFecha) {
+            if (!nuevaFecha) return;
+
+            const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
+
+            fetch(`/admin/core/agendapagos/${id}/editar-fecha/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({ fecha: nuevaFecha })
+            })
+            .then(response => {
+                if(response.status === 403) throw new Error("Acceso denegado: Solo para administradores.");
+                if(!response.ok) throw new Error("Error interno del servidor.");
+                return response.json();
+            })
+            .then(data => {
+                if(data.status === 'ok') {
+                    // Refrescamos la página automáticamente para que Django recalcule
+                    // si la cuota ahora está "Vencida" o "Faltan X días"
+                    location.reload();
+                }
+            })
+            .catch(error => {
+                alert(error.message);
+            });
+        }
+    </script>
 {% endblock %}
